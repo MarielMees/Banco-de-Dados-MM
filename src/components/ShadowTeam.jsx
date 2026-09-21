@@ -10,10 +10,12 @@ import {
   Ruler,
   FileText,
   Loader2,
-  RotateCcw
+  RotateCcw,
+  Menu
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import { toPng } from 'html-to-image'
+import UserBadge from './UserBadge'
 
 // Definição das 5 formações táticas com coordenadas percentuais (top / left)
 // top: 0% = Ataque, 100% = Gol
@@ -128,7 +130,7 @@ const INITIAL_SHADOW_TEAMS = [
   }
 ]
 
-export default function ShadowTeam({ onBack, players = [] }) {
+export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOpenMobileMenu }) {
   // Limpa chaves de cache que possam reter mocks antigos
   useEffect(() => {
     try {
@@ -794,27 +796,38 @@ export default function ShadowTeam({ onBack, players = [] }) {
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-200 font-sans pb-16 select-none flex flex-col">
       {/* 1. TOPO DA PÁGINA */}
-      <header className="bg-[#0b111c] border-b border-slate-800/80 px-6 py-3.5 sticky top-0 z-40 shadow-lg">
-        <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-4 mb-3">
-          <div className="flex items-center gap-4">
+      <header className="bg-[#0b111c] border-b border-slate-800/80 px-3 md:px-6 py-3 md:py-3.5 sticky top-0 z-40 shadow-lg">
+        <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 md:gap-4">
+            {onOpenMobileMenu && (
+              <button
+                type="button"
+                onClick={onOpenMobileMenu}
+                className="md:hidden p-1.5 rounded-lg text-slate-300 hover:text-white bg-slate-900 border border-slate-700 transition cursor-pointer"
+                title="Abrir menu de navegação (☰)"
+                aria-label="Abrir menu de navegação"
+              >
+                <Menu className="w-4 h-4 text-emerald-400" />
+              </button>
+            )}
             <button
               onClick={onBack}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#131d2e] hover:bg-[#19273e] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 md:px-3 py-1.5 rounded-lg bg-[#131d2e] hover:bg-[#19273e] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4 text-emerald-400" />
-              <span>Voltar</span>
+              <span className="hidden sm:inline">Voltar</span>
             </button>
 
             <div>
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-base font-bold text-white tracking-wide">
-                  Time Sombra <span className="text-slate-600">—</span> <span className="text-emerald-400">Campograma Tático</span>
+              <div className="flex items-center gap-2 md:gap-2.5">
+                <h1 className="text-sm md:text-base font-bold text-white tracking-wide">
+                  Time Sombra <span className="hidden sm:inline text-slate-600">—</span> <span className="hidden sm:inline text-emerald-400">Campograma Tático</span>
                 </h1>
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">
+                <span className="text-[9px] md:text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-emerald-950/60 text-emerald-400 border border-emerald-800/60">
                   OFICIAL
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[10px] md:text-[11px] text-slate-400 line-clamp-1">
                 Visualização espacial no gramado com hierarquia de até 5 atletas por posição
               </p>
             </div>
@@ -865,6 +878,10 @@ export default function ShadowTeam({ onBack, players = [] }) {
                 </div>
               </div>
             </div>
+
+            {user && (
+              <UserBadge user={user} onSignOut={onSignOut} />
+            )}
           </div>
         </div>
 
@@ -959,7 +976,7 @@ export default function ShadowTeam({ onBack, players = [] }) {
       </header>
 
       {/* 2. O CAMPO DE FUTEBOL (CAMPOGRAMA VISUAL) */}
-      <main className="flex-1 max-w-[1720px] w-full mx-auto px-6 py-6 flex flex-col items-center overflow-x-auto">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-auto">
         {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS E ETÁRIAS */}
         <div className="w-full max-w-[1400px] mb-4 flex flex-wrap items-center justify-between gap-3 bg-[#0d1522] border border-slate-800/80 rounded-2xl p-3 px-5 shadow-lg backdrop-blur-sm">
           <div className="flex items-center gap-4 flex-wrap">

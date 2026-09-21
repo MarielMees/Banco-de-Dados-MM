@@ -18,10 +18,12 @@ import {
   Shield,
   Zap,
   Check,
-  ChevronRight
+  ChevronRight,
+  Menu
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import { toPng } from 'html-to-image'
+import UserBadge from './UserBadge'
 
 // Definição das formações táticas reaproveitadas do Time Sombra
 const FORMATIONS_CONFIG = {
@@ -364,7 +366,7 @@ export const findRegisteredPlayer = (highlight, playersList) => {
   }) || null
 }
 
-export default function TournamentBestXI({ onBack, matchReports = [], players = [] }) {
+export default function TournamentBestXI({ onBack, matchReports = [], players = [], user, onSignOut, onOpenMobileMenu }) {
   // Lista de jogadores garantida com fallback seguro para a base local
   const allPlayersList = useMemo(() => {
     if (Array.isArray(players) && players.length > 0) return players
@@ -1310,20 +1312,31 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
       )}
 
       {/* 1. TOPO / HEADER */}
-      <header className="bg-[#0b111c] border-b border-slate-800/80 px-6 py-4 sticky top-0 z-40 shadow-xl">
-        <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-4 mb-3">
-          <div className="flex items-center gap-4">
+      <header className="bg-[#0b111c] border-b border-slate-800/80 px-3 md:px-6 py-3 md:py-4 sticky top-0 z-40 shadow-xl">
+        <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-3 mb-3">
+          <div className="flex items-center gap-2 md:gap-4">
+            {onOpenMobileMenu && (
+              <button
+                type="button"
+                onClick={onOpenMobileMenu}
+                className="md:hidden p-1.5 rounded-lg text-slate-300 hover:text-white bg-slate-900 border border-slate-700 transition cursor-pointer"
+                title="Abrir menu de navegação (☰)"
+                aria-label="Abrir menu de navegação"
+              >
+                <Menu className="w-4 h-4 text-emerald-400" />
+              </button>
+            )}
             <button
               onClick={onBack}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-[#131d2e] hover:bg-[#19273e] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center gap-2 px-2.5 md:px-3 py-1.5 rounded-lg bg-[#131d2e] hover:bg-[#19273e] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-4 h-4 text-emerald-400" />
-              <span>Voltar</span>
+              <span className="hidden sm:inline">Voltar</span>
             </button>
 
             <div>
-              <div className="flex items-center gap-2.5">
-                <h1 className="text-base font-bold text-white tracking-wide flex items-center gap-2">
+              <div className="flex items-center gap-2 md:gap-2.5">
+                <h1 className="text-sm md:text-base font-bold text-white tracking-wide flex items-center gap-2">
                   <span>Seleção do Campeonato</span>
                   {selectedTournament && (
                     <>
@@ -1332,12 +1345,12 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
                     </>
                   )}
                 </h1>
-                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                <span className="text-[9px] md:text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-400 border border-amber-500/30 flex items-center gap-1">
                   <Trophy className="w-3 h-3 text-amber-400" />
                   OFICIAL
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[10px] md:text-[11px] text-slate-400 line-clamp-1">
                 Ranking automático dos relatórios de campo com curadoria manual e campograma tático
               </p>
             </div>
@@ -1419,6 +1432,10 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
                 </div>
               </div>
             </div>
+
+            {user && (
+              <UserBadge user={user} onSignOut={onSignOut} />
+            )}
           </div>
         </div>
 
@@ -1476,7 +1493,7 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
       </header>
 
       {/* 2. O CAMPO DE FUTEBOL (CAMPOGRAMA VISUAL) */}
-      <main className="flex-1 max-w-[1720px] w-full mx-auto px-6 py-6 flex flex-col items-center overflow-x-auto">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-auto">
         {availableTournaments.length === 0 ? (
           <div className="w-full max-w-[760px] my-16 py-16 px-8 rounded-3xl bg-[#070e1b]/95 border border-emerald-500/30 shadow-2xl flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-5 text-amber-400">

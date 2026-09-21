@@ -13,12 +13,14 @@ import {
   Trophy,
   Pencil,
   Eye,
-  Users
+  Users,
+  Menu
 } from 'lucide-react'
 import PostMatchReportModal from './PostMatchReportModal'
 import MatchReportViewerModal from './MatchReportViewerModal'
 import QuickMatchReportModal from './QuickMatchReportModal'
 import ConfirmDeleteModal from './ConfirmDeleteModal'
+import UserBadge from './UserBadge'
 import { fetchMatchReportsFromSupabase } from '../services/supabaseService'
 
 export default function MatchReportsList({
@@ -33,7 +35,10 @@ export default function MatchReportsList({
   coaches = [],
   players = [],
   initialReportToEdit = null,
-  initialAddModalOpen = false
+  initialAddModalOpen = false,
+  user,
+  onSignOut,
+  onOpenMobileMenu
 }) {
   const [search, setSearch] = useState('')
   const [yearFilter, setYearFilter] = useState('ALL')
@@ -327,47 +332,62 @@ export default function MatchReportsList({
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-200 font-sans pb-12 select-none">
       {/* 1. TOPO / HEADER */}
-      <header className="bg-[#0b111c] border-b border-slate-800/80 px-6 py-3 sticky top-0 z-50">
-        <div className="max-w-[1720px] mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-4">
+      <header className="bg-[#0b111c] border-b border-slate-800/80 px-3 md:px-6 py-3 sticky top-0 z-50">
+        <div className="max-w-[1720px] mx-auto flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 md:gap-4">
+            {onOpenMobileMenu && (
+              <button
+                type="button"
+                onClick={onOpenMobileMenu}
+                className="md:hidden p-1.5 rounded-lg text-slate-300 hover:text-white bg-slate-900 border border-slate-700 transition cursor-pointer"
+                title="Abrir menu de navegação (☰)"
+                aria-label="Abrir menu de navegação"
+              >
+                <Menu className="w-4 h-4 text-emerald-400" />
+              </button>
+            )}
             <button
               onClick={onBack}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#121d30] hover:bg-[#1a2942] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
+              className="flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg bg-[#121d30] hover:bg-[#1a2942] text-slate-300 border border-slate-700/80 text-xs font-semibold transition-colors cursor-pointer"
             >
               <ArrowLeft className="w-3.5 h-3.5" />
-              <span>Voltar</span>
+              <span className="hidden sm:inline">Voltar</span>
             </button>
 
-            <div className="flex items-center gap-3">
-              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+            <div className="flex items-center gap-2 md:gap-3">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
                 <FileText className="w-4 h-4" />
               </div>
               <div>
-                <h1 className="text-base font-bold text-white tracking-wide">
-                  Relatórios de Jogo <span className="text-slate-600">|</span> <span className="text-emerald-400">Análise de Partidas</span>
+                <h1 className="text-sm md:text-base font-bold text-white tracking-wide">
+                  Relatórios de Jogo <span className="hidden sm:inline text-slate-600">|</span> <span className="hidden sm:inline text-emerald-400">Análise de Partidas</span>
                 </h1>
-                <p className="text-[11px] text-slate-400">
+                <p className="text-[10px] md:text-[11px] text-slate-400 line-clamp-1">
                   Observações táticas in loco, notas técnicas e avaliações individuais
                 </p>
               </div>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="bg-[#121c2d] border border-slate-700/80 rounded-lg px-3 py-1 text-center min-w-[75px]">
-              <div className="text-base font-extrabold text-white leading-tight">
+          <div className="flex items-center gap-2 md:gap-3">
+            <div className="bg-[#121c2d] border border-slate-700/80 rounded-lg px-2.5 md:px-3 py-1 text-center min-w-[65px] md:min-w-[75px]">
+              <div className="text-sm md:text-base font-extrabold text-white leading-tight">
                 {(matchReports || []).length}
               </div>
-              <div className="text-[9px] font-bold text-slate-400 tracking-wider">
+              <div className="text-[8px] md:text-[9px] font-bold text-slate-400 tracking-wider">
                 PARTIDAS
               </div>
             </div>
+
+            {user && (
+              <UserBadge user={user} onSignOut={onSignOut} />
+            )}
           </div>
         </div>
       </header>
 
       {/* 2. BARRA DE FILTROS & AÇÕES */}
-      <section className="max-w-[1720px] mx-auto px-6 pt-5 pb-3">
+      <section className="max-w-[1720px] mx-auto px-3 md:px-6 pt-4 md:pt-5 pb-3">
         <div className="bg-[#0b111c] border border-slate-800/90 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
           {/* Lado Esquerdo: Busca e Filtros */}
           <div className="flex flex-wrap items-center gap-3">
@@ -464,7 +484,7 @@ export default function MatchReportsList({
       </section>
 
       {/* 3. LISTAGEM DE PARTIDAS EM CARDS ESTRUTURADOS COM ALTO CONTRASTE */}
-      <main className="max-w-[1720px] mx-auto px-6 space-y-6">
+      <main className="w-full min-h-screen max-w-[1720px] mx-auto px-3 py-4 md:px-6 space-y-6">
         {filteredReports.length === 0 ? (
           <div className="bg-[#0b111c] border border-slate-800 rounded-xl p-12 text-center text-slate-500 text-xs">
             Nenhum relatório de jogo encontrado com os filtros atuais.

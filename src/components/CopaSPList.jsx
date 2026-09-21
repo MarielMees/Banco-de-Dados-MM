@@ -21,10 +21,12 @@ import {
   Loader2,
   Calendar,
   Layers,
-  CheckCircle2
+  CheckCircle2,
+  Menu
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import { toPng } from 'html-to-image'
+import UserBadge from './UserBadge'
 
 // Posições internas para observação e jogos da Copa SP
 const POSICOES_COPA_SP = [
@@ -131,7 +133,10 @@ export default function CopaSPList({
   onBack,
   onPromotePlayer,
   mainPlayers = [],
-  initialMatchToCreate = null
+  initialMatchToCreate = null,
+  user,
+  onSignOut,
+  onOpenMobileMenu
 }) {
   // 3 Sub-abas da Copa SP
   const [subTab, setSubTab] = useState(initialMatchToCreate ? 'JOGOS' : 'ATLETAS') // 'ATLETAS' | 'JOGOS' | 'SELECAO'
@@ -836,9 +841,20 @@ export default function CopaSPList({
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-200 font-sans pb-16 select-none">
       {/* 1. CABEÇALHO DA ABA COPA SP */}
-      <header className="bg-[#0b111c] border-b border-slate-800/80 px-6 py-3.5 sticky top-0 z-40">
-        <div className="max-w-[1720px] mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
+      <header className="bg-[#0b111c] border-b border-slate-800/80 px-3 md:px-6 py-3 md:py-3.5 sticky top-0 z-40">
+        <div className="max-w-[1720px] mx-auto flex flex-wrap items-center justify-between gap-3">
+          <div className="flex items-center gap-2 md:gap-3">
+            {onOpenMobileMenu && (
+              <button
+                type="button"
+                onClick={onOpenMobileMenu}
+                className="md:hidden p-1.5 rounded-lg text-slate-300 hover:text-white bg-slate-900 border border-slate-700 transition cursor-pointer"
+                title="Abrir menu de navegação (☰)"
+                aria-label="Abrir menu de navegação"
+              >
+                <Menu className="w-4 h-4 text-emerald-400" />
+              </button>
+            )}
             <button
               onClick={onBack}
               title="Voltar para a Visão Geral"
@@ -847,65 +863,71 @@ export default function CopaSPList({
               <ArrowLeft className="w-4 h-4" />
             </button>
 
-            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm">
+            <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shadow-sm shrink-0">
               <GraduationCap className="w-4 h-4" />
             </div>
 
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base font-bold text-white tracking-wide">
+                <h1 className="text-sm md:text-base font-bold text-white tracking-wide">
                   Copa SP de Futebol Júnior
                 </h1>
-                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-tight">
+                <span className="hidden sm:inline-flex text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 uppercase tracking-tight">
                   Sandbox de Base
                 </span>
-                <span className="text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
+                <span className="hidden sm:inline-block text-[10px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800">
                   {copaPlayers.length} atletas &bull; {copaMatches.length} jogos
                 </span>
               </div>
-              <p className="text-[11px] text-slate-400">
+              <p className="text-[10px] md:text-[11px] text-slate-400 line-clamp-1">
                 Ecossistema isolado da base: observações, relatórios de partidas e 11 ideal da Copinha
               </p>
             </div>
           </div>
 
-          {/* Sub-abas de Navegação */}
-          <div className="flex items-center gap-1.5 bg-[#080d16] p-1 rounded-xl border border-slate-800">
-            <button
-              onClick={() => setSubTab('ATLETAS')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                subTab === 'ATLETAS'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <ClipboardList className="w-3.5 h-3.5" />
-              <span>Atletas Observados ({copaPlayers.length})</span>
-            </button>
+          <div className="flex items-center gap-2 md:gap-3 w-full sm:w-auto justify-between sm:justify-end">
+            {/* Sub-abas de Navegação */}
+            <div className="flex items-center gap-1 bg-[#080d16] p-1 rounded-xl border border-slate-800 overflow-x-auto max-w-full">
+              <button
+                onClick={() => setSubTab('ATLETAS')}
+                className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  subTab === 'ATLETAS'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <ClipboardList className="w-3.5 h-3.5" />
+                <span>Atletas <span className="hidden sm:inline">Observados</span> ({copaPlayers.length})</span>
+              </button>
 
-            <button
-              onClick={() => setSubTab('JOGOS')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                subTab === 'JOGOS'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <FileText className="w-3.5 h-3.5" />
-              <span>Relatórios de Jogo ({copaMatches.length})</span>
-            </button>
+              <button
+                onClick={() => setSubTab('JOGOS')}
+                className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  subTab === 'JOGOS'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <FileText className="w-3.5 h-3.5" />
+                <span>Jogos <span className="hidden sm:inline">({copaMatches.length})</span></span>
+              </button>
 
-            <button
-              onClick={() => setSubTab('SELECAO')}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer ${
-                subTab === 'SELECAO'
-                  ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
-                  : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
-              }`}
-            >
-              <Trophy className="w-3.5 h-3.5" />
-              <span>Seleção da Copa SP</span>
-            </button>
+              <button
+                onClick={() => setSubTab('SELECAO')}
+                className={`flex items-center gap-1.5 px-2.5 md:px-3 py-1.5 rounded-lg text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
+                  subTab === 'SELECAO'
+                    ? 'bg-amber-500 text-slate-950 shadow-md shadow-amber-500/20'
+                    : 'text-slate-400 hover:text-white hover:bg-slate-800/60'
+                }`}
+              >
+                <Trophy className="w-3.5 h-3.5" />
+                <span>Seleção <span className="hidden sm:inline">da Copa SP</span></span>
+              </button>
+            </div>
+
+            {user && (
+              <UserBadge user={user} onSignOut={onSignOut} />
+            )}
           </div>
         </div>
       </header>
@@ -914,7 +936,7 @@ export default function CopaSPList({
       {subTab === 'ATLETAS' && (
         <>
           {/* Barra de Filtros */}
-          <div className="max-w-[1720px] mx-auto px-6 pt-5 pb-3">
+          <div className="max-w-[1720px] mx-auto px-3 md:px-6 pt-4 md:pt-5 pb-3">
             <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-3.5 flex flex-wrap items-center justify-between gap-3 shadow-md">
               <div className="flex flex-wrap items-center gap-2.5 text-xs">
                 <div className="relative w-64">
@@ -962,7 +984,7 @@ export default function CopaSPList({
           </div>
 
           {/* Grid de Atletas */}
-          <main className="max-w-[1720px] mx-auto px-6 py-2">
+          <main className="w-full min-h-screen max-w-[1720px] mx-auto px-3 md:px-6 py-2">
             {filteredAthletes.length === 0 ? (
               <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-12 text-center max-w-xl mx-auto mt-8 shadow-lg">
                 <GraduationCap className="w-12 h-12 text-amber-500/60 mx-auto mb-3" />
@@ -1108,7 +1130,7 @@ export default function CopaSPList({
 
       {/* SUB-ABA 2: RELATÓRIOS DE JOGO DA COPINHA */}
       {subTab === 'JOGOS' && (
-        <main className="max-w-[1720px] mx-auto px-6 py-5 space-y-4">
+        <main className="w-full min-h-screen max-w-[1720px] mx-auto px-3 md:px-6 py-4 md:py-5 space-y-4">
           <div className="flex items-center justify-between gap-4 bg-[#0f172a] border border-slate-800 rounded-xl p-3.5 shadow-md">
             <div>
               <h2 className="text-sm font-bold text-white flex items-center gap-2">
@@ -1230,7 +1252,7 @@ export default function CopaSPList({
 
       {/* SUB-ABA 3: SELEÇÃO DA COPA SP (CAMPOGRAMA TÁTICO) */}
       {subTab === 'SELECAO' && (
-        <main className="max-w-[1720px] mx-auto px-6 py-4 space-y-4">
+        <main className="w-full min-h-screen max-w-[1720px] mx-auto px-3 md:px-6 py-4 space-y-4">
           {/* Barra de Controles Táticos */}
           <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
             {/* Esquemas Táticos */}

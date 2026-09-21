@@ -21,6 +21,11 @@ import {
   upsertMatchReportToSupabase,
   deleteMatchReportFromSupabase
 } from './services/supabaseService'
+import { supabase } from './services/supabaseClient'
+import Login from './components/Login'
+import UserBadge from './components/UserBadge'
+import Sidebar from './components/Sidebar'
+import { Loader2, Zap, Menu } from 'lucide-react'
 
 const INITIAL_RECENT_ADDITIONS = [
   {
@@ -137,6 +142,40 @@ function App() {
   })
   const [agendaPrefillMatch, setAgendaPrefillMatch] = useState(null)
   const [copaSPPrefillMatch, setCopaSPPrefillMatch] = useState(null)
+
+  // 1. Controle de Sessão Global com Supabase Auth
+  const [session, setSession] = useState(null)
+  const [isAuthLoading, setIsAuthLoading] = useState(true)
+  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session: initialSession } }) => {
+      setSession(initialSession)
+      setIsAuthLoading(false)
+    }).catch((err) => {
+      console.warn('[Supabase Auth] Erro ao recuperar sessão inicial:', err)
+      setIsAuthLoading(false)
+    })
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, currentSession) => {
+      setSession(currentSession)
+      setIsAuthLoading(false)
+    })
+
+    return () => {
+      subscription?.unsubscribe()
+    }
+  }, [])
+
+  const handleSignOut = async () => {
+    try {
+      await supabase.auth.signOut()
+    } catch (err) {
+      console.warn('[Supabase Auth] Erro ao deslogar:', err)
+    } finally {
+      setSession(null)
+    }
+  }
 
   // Sincronização inicial com o Supabase para Jogadores e Relatórios (com fallback no localStorage)
   useEffect(() => {
@@ -481,7 +520,7 @@ function App() {
       tipo: 'relatorio',
       nome: updatedReport.partida,
       detalhe: updatedReport.competicao || 'Partida',
-      autor: 'dudu@admin.com',
+      autor: session?.user?.email || 'dudu@admin.com',
       dataHora: `hoje às ${hours}:${minutes}`
     }
     setRecentAdditions(prevRecent => {
@@ -629,7 +668,7 @@ function App() {
           nivel: playerData.nivel,
           monitoramento: !!playerData.monitoramento,
           ca: playerData.ca,
-          autor: 'dudu@admin.com',
+          autor: session?.user?.email || 'dudu@admin.com',
           dataHora: `hoje às ${hours}:${minutes}`
         }
         setRecentAdditions(prevRecent => {
@@ -671,6 +710,25 @@ function App() {
     deletePlayerFromSupabase(id)
   }
 
+  // 3. Barreira de Autenticação Global
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-[#070b12] text-slate-200 flex flex-col items-center justify-center select-none">
+        <div className="w-12 h-12 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mb-4 animate-pulse">
+          <Zap className="w-6 h-6 fill-emerald-400" />
+        </div>
+        <div className="flex items-center gap-2 text-xs font-semibold text-slate-400">
+          <Loader2 className="w-4 h-4 animate-spin text-emerald-400" />
+          <span>Verificando autenticação...</span>
+        </div>
+      </div>
+    )
+  }
+
+  if (!session || !session.user) {
+    return <Login onLoginSuccess={(newSession) => setSession(newSession)} />
+  }
+
   return (
     <>
       {currentTab === 'visao-geral' ? (
@@ -680,17 +738,26 @@ function App() {
           players={players}
           onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
           onOpenRecentAdditions={() => setIsRecentAdditionsOpen(true)}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : currentTab === 'time-sombra' ? (
         <ShadowTeam
           onBack={() => setCurrentTab('visao-geral')}
           players={players}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : currentTab === 'selecao-campeonato' ? (
         <TournamentBestXI
           onBack={() => setCurrentTab('visao-geral')}
           matchReports={matchReports}
           players={players}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : currentTab === 'treinadores' ? (
         <CoachesList
@@ -699,6 +766,9 @@ function App() {
           onSaveCoach={handleSaveCoach}
           onDeleteCoach={handleDeleteCoach}
           matchReports={matchReports}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : currentTab === 'relatorios-jogo' || currentTab === 'relatorios-individuais' ? (
         <MatchReportsList
@@ -714,6 +784,9 @@ function App() {
           players={players}
           initialReportToEdit={agendaPrefillMatch}
           initialAddModalOpen={!!agendaPrefillMatch}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : currentTab === 'copa-sp' ? (
         <CopaSPList
@@ -721,16 +794,32 @@ function App() {
           onPromotePlayer={handleSavePlayer}
           mainPlayers={players}
           initialMatchToCreate={copaSPPrefillMatch}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       ) : (currentTab === 'agenda-jogos' || currentTab === 'agenda-jogos-v2') ? (
-        <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-6 lg:p-8">
-          <div className="max-w-7xl mx-auto space-y-4">
-            <button
-              onClick={() => setCurrentTab('visao-geral')}
-              className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3 py-1.5 rounded-lg transition cursor-pointer mb-2"
-            >
-              ← Voltar ao Início
-            </button>
+        <div className="w-full min-h-screen bg-slate-950 text-slate-100 px-3 py-4 md:p-6 lg:p-8 overflow-x-hidden">
+          <div className="max-w-7xl w-full mx-auto space-y-4">
+            <div className="flex items-center justify-between mb-2 gap-2">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsMobileMenuOpen(true)}
+                  className="md:hidden p-1.5 rounded-lg text-slate-300 hover:text-white bg-slate-900 border border-slate-700 transition cursor-pointer"
+                  title="Abrir menu de navegação (☰)"
+                >
+                  <Menu className="w-4 h-4 text-emerald-400" />
+                </button>
+                <button
+                  onClick={() => setCurrentTab('visao-geral')}
+                  className="inline-flex items-center gap-2 text-xs font-semibold text-slate-400 hover:text-white bg-slate-900/80 hover:bg-slate-800 border border-slate-800 px-3 py-1.5 rounded-lg transition cursor-pointer"
+                >
+                  ← Voltar ao Início
+                </button>
+              </div>
+              <UserBadge user={session.user} onSignOut={handleSignOut} />
+            </div>
             <ErrorBoundary
               fallbackTitle="Agenda Oficial de Jogos Temporariamente Indisponível"
               fallbackMessage="Ocorreu uma inconsistência no módulo da Agenda Oficial. Seus atletas cadastrados e relatórios continuam 100% seguros e intactos."
@@ -755,8 +844,24 @@ function App() {
           onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
           onOpenRecentAdditions={() => setIsRecentAdditionsOpen(true)}
           matchReports={matchReports}
+          user={session.user}
+          onSignOut={handleSignOut}
+          onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
         />
       )}
+
+      {/* BARRA LATERAL RETRÁTIL / DRAWER NO MOBILE */}
+      <Sidebar
+        isOpen={isMobileMenuOpen}
+        onClose={() => setIsMobileMenuOpen(false)}
+        currentTab={currentTab}
+        onSelectTab={handleSelectTab}
+        players={players}
+        user={session.user}
+        onSignOut={handleSignOut}
+        onOpenGlobalSearch={() => setIsGlobalSearchOpen(true)}
+        onOpenRecentAdditions={() => setIsRecentAdditionsOpen(true)}
+      />
 
       {/* MODAL / TELA DE BUSCA GLOBAL */}
       <GlobalSearch
