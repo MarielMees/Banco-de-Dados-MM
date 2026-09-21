@@ -380,19 +380,88 @@ export default function MatchCalendarV2({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Exportar Cofre completo em arquivo .json
+  // 1. Exportação Completa: Vasculha absolutamente todas as chaves do localStorage (Jogos, Súmulas e Relatórios)
   const handleExportVault = () => {
     try {
-      const currentMatches = getStoredMatchesV2();
-      const currentReports = getStoredReportsV2();
+      const localStorageDump = {};
+      const allMatchesMap = new Map();
+      const allReportsMap = new Map();
+
+      // a) Vasculha todas as chaves do localStorage do navegador
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (!key) continue;
+        const val = localStorage.getItem(key);
+        if (!val) continue;
+
+        const lower = key.toLowerCase();
+        const isMatchKey = lower.includes('matches') || lower.includes('vault') || lower.includes('fotmob') || lower.includes('api_football') || lower.includes('agenda');
+        const isReportKey = lower.includes('report') || lower.includes('relatorio') || lower.includes('relatorios') || lower.includes('scout_notes');
+        const isOtherScoutKey = lower.includes('scout') || lower.includes('radar') || lower.includes('players') || lower.includes('coaches');
+
+        if (isMatchKey || isReportKey || isOtherScoutKey) {
+          localStorageDump[key] = val;
+
+          try {
+            const parsed = JSON.parse(val);
+            if (Array.isArray(parsed)) {
+              if (isMatchKey) {
+                parsed.forEach(m => {
+                  const mId = m?.id || m?.fixtureId || m?.fixture?.id;
+                  if (mId) allMatchesMap.set(String(mId), m);
+                });
+              }
+              if (isReportKey) {
+                parsed.forEach(r => {
+                  const rId = r?.id || r?.fixtureId || r?.matchId || r?.match_id;
+                  if (rId) allReportsMap.set(String(rId), r);
+                });
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      // b) Garante que getStoredMatchesV2() e getStoredReportsV2() estejam consolidados
+      try {
+        const v2Matches = getStoredMatchesV2();
+        v2Matches.forEach(m => {
+          const mId = m?.id || m?.fixtureId || m?.fixture?.id;
+          if (mId) {
+            const existing = allMatchesMap.get(String(mId)) || {};
+            allMatchesMap.set(String(mId), { ...existing, ...m });
+          }
+        });
+
+        const v2Reports = getStoredReportsV2();
+        v2Reports.forEach(r => {
+          const rId = r?.id || r?.fixtureId || r?.matchId || r?.match_id;
+          if (rId) {
+            const existing = allReportsMap.get(String(rId)) || {};
+            allReportsMap.set(String(rId), { ...existing, ...r });
+          }
+        });
+      } catch (_) {}
+
+      const matchesList = Array.from(allMatchesMap.values());
+      const reportsList = Array.from(allReportsMap.values());
+
+      // c) Consolida chaves canônicas no dump
+      localStorageDump['radar_v2_matches_repository'] = JSON.stringify(matchesList);
+      localStorageDump['matchesVault'] = JSON.stringify(matchesList);
+      localStorageDump['radar_v2_reports'] = JSON.stringify(reportsList);
+      localStorageDump['scout_match_reports'] = JSON.stringify(reportsList);
+      localStorageDump['matchReports'] = JSON.stringify(reportsList);
 
       const backupData = {
-        version: '2.0',
+        type: 'FULL_AGENDA_VAULT_BACKUP',
+        version: '3.0',
         exportedAt: new Date().toISOString(),
-        totalMatches: currentMatches.length,
-        totalReports: currentReports.length,
-        matches: currentMatches,
-        reports: currentReports
+        totalMatches: matchesList.length,
+        totalReports: reportsList.length,
+        matches: matchesList,
+        reports: reportsList,
+        localStorageDump
       };
 
       const jsonString = JSON.stringify(backupData, null, 2);
@@ -400,20 +469,20 @@ export default function MatchCalendarV2({
       const url = URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = 'cofre_agenda_backup.json';
+      link.download = 'backup_completo_agenda.json';
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(url);
 
-      showToast(`Cofre exportado com sucesso! (${currentMatches.length} partidas salvas)`);
+      showToast(`Backup completo gerado! (${matchesList.length} jogos, ${reportsList.length} relatórios)`);
     } catch (err) {
-      console.error('[MatchCalendarV2] Erro ao exportar cofre:', err);
-      showToast('Erro ao exportar cofre: ' + err.message);
+      console.error('[MatchCalendarV2] Erro na exportação completa:', err);
+      alert('Erro ao exportar cofre: ' + err.message);
     }
   };
 
-  // Importar Cofre a partir de arquivo .json com merge seguro
+  // 2. Importação com Merge e Atualização Instantânea: Restaura tudo no localStorage, Supabase e recarrega a página
   const handleImportVault = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -427,6 +496,49 @@ export default function MatchCalendarV2({
         }
 
         const data = JSON.parse(text);
+
+        // a) Percorre cada chave presente no dump e grava no localStorage com merge por ID
+        if (data.localStorageDump && typeof data.localStorageDump === 'object') {
+          Object.entries(data.localStorageDump).forEach(([k, rawVal]) => {
+            if (!k || rawVal === undefined || rawVal === null) return;
+            try {
+              const strVal = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal);
+              const existingRaw = localStorage.getItem(k);
+
+              if (existingRaw) {
+                try {
+                  const existingParsed = JSON.parse(existingRaw);
+                  const incomingParsed = JSON.parse(strVal);
+
+                  if (Array.isArray(existingParsed) && Array.isArray(incomingParsed)) {
+                    const mapById = new Map();
+                    existingParsed.forEach(item => {
+                      const id = item && (item.id || item.fixtureId);
+                      if (id) mapById.set(String(id), item);
+                    });
+                    incomingParsed.forEach(item => {
+                      const id = item && (item.id || item.fixtureId);
+                      if (id) {
+                        const prev = mapById.get(String(id)) || {};
+                        mapById.set(String(id), { ...prev, ...item });
+                      } else {
+                        mapById.set(String(Math.random()), item);
+                      }
+                    });
+                    localStorage.setItem(k, JSON.stringify(Array.from(mapById.values())));
+                    return;
+                  }
+                } catch (_) {}
+              }
+
+              localStorage.setItem(k, strVal);
+            } catch (kErr) {
+              console.warn('[MatchCalendarV2] Erro ao restaurar chave:', k, kErr);
+            }
+          });
+        }
+
+        // b) Extrai arrays unificados de partidas e relatórios
         let incomingMatches = [];
         let incomingReports = [];
 
@@ -440,48 +552,93 @@ export default function MatchCalendarV2({
           if (Array.isArray(data.reports)) incomingReports = data.reports;
           else if (Array.isArray(data.radar_v2_reports)) incomingReports = data.radar_v2_reports;
           else if (Array.isArray(data.scout_match_reports)) incomingReports = data.scout_match_reports;
+          else if (Array.isArray(data.matchReports)) incomingReports = data.matchReports;
         }
 
-        if (incomingMatches.length === 0 && incomingReports.length === 0) {
-          showToast('Nenhuma partida ou relatório válido encontrado no arquivo JSON.');
-          return;
-        }
-
-        // 1. Merge defensivo e cumulativo das partidas no cofre local
-        let mergeResult = { updatedCount: 0, newCount: 0, totalCount: matches.length };
+        // c) Merge seguro das partidas no cofre local (preserva relatórios concluídos e jogos cadastrados)
         if (incomingMatches.length > 0) {
-          mergeResult = mergeMatchesIntoVault(incomingMatches);
+          mergeMatchesIntoVault(incomingMatches);
         }
 
-        // 2. Preserva relatórios concluídos
+        // d) Salva e vincula relatórios nas chaves canônicas
         if (incomingReports.length > 0) {
           incomingReports.forEach(rep => {
             saveStoredReportV2(rep);
           });
         }
 
-        // 3. Atualiza estado da interface imediatamente
-        const updatedMatches = getStoredMatchesV2();
-        const updatedReports = getStoredReportsV2();
-        setMatches(updatedMatches);
-        setReports(updatedReports);
+        // e) Garante que os relatórios estejam associados às partidas no cofre
+        const currentMatches = getStoredMatchesV2();
+        const currentReports = getStoredReportsV2();
 
-        // 4. Sincronização em Nuvem (Supabase)
-        syncVaultToSupabase(updatedMatches).catch(err => {
-          console.warn('[MatchCalendarV2] Falha no sync com Supabase pós-importação:', err);
+        const linkedMatches = currentMatches.map(m => {
+          const rep = currentReports.find(r => 
+            (r?.fixtureId && String(r.fixtureId) === String(m.id)) ||
+            (r?.matchId && String(r.matchId) === String(m.id)) ||
+            (r?.match_id && String(r.match_id) === String(m.id)) ||
+            (m.fixtureId && r?.fixtureId && String(r.fixtureId) === String(m.fixtureId)) ||
+            (m.reportId && String(r?.id) === String(m.reportId)) ||
+            (r?.id && String(r.id) === String(m.id)) ||
+            (r?.partida && m.homeTeam && m.awayTeam && r.partida.toLowerCase().includes(m.homeTeam.toLowerCase()) && r.partida.toLowerCase().includes(m.awayTeam.toLowerCase()))
+          ) || m.scoutReport;
+
+          if (rep) {
+            return {
+              ...m,
+              hasReport: true,
+              reportStatus: 'CONCLUIDO',
+              reportId: rep.id || m.id,
+              scoutReport: rep,
+              isArchived: true // Partidas com relatório completo ficam no histórico
+            };
+          }
+          return m;
         });
 
-        showToast(`Cofre importado com sucesso! (${mergeResult.updatedCount || 0} atualizados, ${mergeResult.newCount || 0} novos jogos inseridos)`);
+        saveStoredMatchesV2(linkedMatches);
+
+        // Atualiza chaves legadas e padrão para sincronização perfeita de tela
+        try {
+          const existingScoutReports = JSON.parse(localStorage.getItem('scout_match_reports') || '[]');
+          const mergedScoutReports = [...currentReports];
+          existingScoutReports.forEach(er => {
+            if (!mergedScoutReports.some(mr => String(mr.id) === String(er.id))) {
+              mergedScoutReports.push(er);
+            }
+          });
+          localStorage.setItem('scout_match_reports', JSON.stringify(mergedScoutReports));
+          localStorage.setItem('matchReports', JSON.stringify(mergedScoutReports));
+          localStorage.setItem('radar_match_reports', JSON.stringify(mergedScoutReports));
+        } catch (_) {}
+
+        // f) Sincronização em Nuvem (Supabase)
+        try {
+          await syncVaultToSupabase(linkedMatches);
+        } catch (_) {}
+
+        const finalMatchesCount = linkedMatches.length;
+        const finalReportsCount = currentReports.length;
+
+        // g) Mostra alert de sucesso informando quantos jogos e relatórios foram recuperados
+        alert(
+          `Backup completo importado com sucesso!\n\n` +
+          `• ${finalMatchesCount} partidas salvas no cofre\n` +
+          `• ${finalReportsCount} relatórios completos recuperados\n\n` +
+          `A página será recarregada para atualizar a Agenda e exibir os botões de relatório.`
+        );
+
+        // h) Force reload suave para leitura imediata dos dados importados
+        window.location.reload();
       } catch (err) {
-        console.error('[MatchCalendarV2] Erro ao importar cofre:', err);
-        showToast('Erro ao ler arquivo JSON: ' + err.message);
+        console.error('[MatchCalendarV2] Erro na importação:', err);
+        alert('Erro ao importar backup: ' + err.message);
       } finally {
         if (e.target) e.target.value = '';
       }
     };
 
     reader.onerror = () => {
-      showToast('Falha ao abrir arquivo.');
+      alert('Falha ao abrir arquivo.');
       if (e.target) e.target.value = '';
     };
 
@@ -1262,8 +1419,16 @@ export default function MatchCalendarV2({
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
               {finishedMatches.map((match) => {
-                const report = (reports || []).find(r => String(r?.fixtureId) === String(match?.id));
-                const isReportDone = Boolean(report || match?.hasReport || match?.scoutReport);
+                const report = (reports || []).find(r => 
+                  (r?.fixtureId && String(r.fixtureId) === String(match?.id)) ||
+                  (r?.matchId && String(r.matchId) === String(match?.id)) ||
+                  (r?.match_id && String(r.match_id) === String(match?.id)) ||
+                  (match?.fixtureId && r?.fixtureId && String(r.fixtureId) === String(match.fixtureId)) ||
+                  (match?.reportId && String(r?.id) === String(match.reportId)) ||
+                  (r?.id && String(r.id) === String(match?.id)) ||
+                  (r?.partida && match?.homeTeam && match?.awayTeam && r.partida.toLowerCase().includes(match.homeTeam.toLowerCase()) && r.partida.toLowerCase().includes(match.awayTeam.toLowerCase()))
+                ) || match?.scoutReport;
+                const isReportDone = Boolean(report || match?.hasReport || match?.scoutReport || match?.reportStatus === 'CONCLUIDO');
                 const homeName = match?.homeTeam || match?.teams?.home?.name || 'Mandante';
                 const awayName = match?.awayTeam || match?.teams?.away?.name || 'Visitante';
                 const leagueTitle = match?.leagueName || match?.league?.name || 'Competição Oficial';

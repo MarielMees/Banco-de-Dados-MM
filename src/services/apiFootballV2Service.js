@@ -64,6 +64,7 @@ export function getRollingDates(daysBack = 3, daysForward = 7) {
 export function isMatchFinishedOrPast(m) {
   if (!m) return false;
   if (m.isArchived) return true;
+  if (m.hasReport || m.scoutReport || m.reportStatus === 'CONCLUIDO') return true;
   const status = m.status || m.fixture?.status?.short || m.statusShort;
   if (FINISHED_STATUS_CODES.includes(status)) return true;
 
