@@ -356,3 +356,149 @@ export async function deleteMatchReportFromSupabase(id) {
     return { success: false, error: err.message };
   }
 }
+
+/**
+ * Mapeamento Partida (App) -> Linha da Tabela 'matches' (Supabase)
+ */
+export function mapMatchToSupabaseRow(m) {
+  if (!m || !m.id) return null;
+  const dateStr = m.date || (m.datetime ? String(m.datetime).split('T')[0] : null);
+  const homeName = m.homeTeam || m.mandante?.nome || m.teams?.home?.name || 'Mandante';
+  const awayName = m.awayTeam || m.visitante?.nome || m.teams?.away?.name || 'Visitante';
+  const homeScore = m.homeScore !== undefined && m.homeScore !== null ? Number(m.homeScore) : null;
+  const awayScore = m.awayScore !== undefined && m.awayScore !== null ? Number(m.awayScore) : null;
+
+  return {
+    id: String(m.id),
+    fixture_id: m.fixtureId ? String(m.fixtureId) : String(m.id),
+    league_id: m.leagueId || m.league?.id || null,
+    league_name: m.leagueName || m.league?.name || null,
+    home_team: homeName,
+    away_team: awayName,
+    home_score: homeScore,
+    away_score: awayScore,
+    match_date: dateStr,
+    status: m.status || m.statusShort || 'NS',
+    has_report: Boolean(m.hasReport),
+    report_status: m.reportStatus || 'PENDENTE',
+    data: m,
+    updated_at: new Date().toISOString()
+  };
+}
+
+/**
+ * Mapeamento Linha da Tabela 'matches' (Supabase) -> Partida (App)
+ */
+export function mapSupabaseRowToMatch(row) {
+  if (!row) return null;
+  // Se contiver o objeto serializado completo 'data', restaura integralmente
+  if (row.data && typeof row.data === 'object' && (row.data.id || row.data.fixtureId)) {
+    return {
+      ...row.data,
+      id: String(row.id || row.data.id),
+      hasReport: row.has_report !== undefined ? Boolean(row.has_report) : Boolean(row.data.hasReport),
+      reportStatus: row.report_status || row.data.reportStatus || 'PENDENTE'
+    };
+  }
+
+  // Fallback para campos relacionais básicos
+  const homeScore = row.home_score ?? null;
+  const awayScore = row.away_score ?? null;
+  return {
+    id: String(row.id),
+    fixtureId: String(row.fixture_id || row.id),
+    date: row.match_date || '',
+    datetime: row.match_date ? `${row.match_date}T16:00:00Z` : '',
+    time: '—',
+    status: row.status || 'NS',
+    statusShort: row.status || 'NS',
+    leagueId: row.league_id,
+    leagueName: row.league_name || 'Competição Oficial',
+    homeTeam: row.home_team || 'Mandante',
+    awayTeam: row.away_team || 'Visitante',
+    homeScore,
+    awayScore,
+    hasReport: Boolean(row.has_report),
+    reportStatus: row.report_status || 'PENDENTE',
+    mandante: { nome: row.home_team || 'Mandante' },
+    visitante: { nome: row.away_team || 'Visitante' },
+    placar: { mandante: homeScore ?? 0, visitante: awayScore ?? 0 }
+  };
+}
+
+/**
+ * Busca todas as partidas da tabela 'matches' do Supabase
+ */
+export async function fetchMatchesFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('matches')
+      .select('*')
+      .order('updated_at', { ascending: false });
+
+    if (error) {
+      console.warn('[Supabase] Consulta de partidas indisponível (cofre local ativo):', error.message);
+      return null;
+    }
+    if (Array.isArray(data)) {
+      return data.map(mapSupabaseRowToMatch).filter(Boolean);
+    }
+    return [];
+  } catch (err) {
+    console.warn('[Supabase] Falha ao consultar partidas na nuvem:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Upsert em lote de partidas no Supabase
+ */
+export async function upsertMatchesToSupabase(matches) {
+  try {
+    if (!Array.isArray(matches) || matches.length === 0) return { success: true, count: 0 };
+
+    const rows = matches.map(mapMatchToSupabaseRow).filter(Boolean);
+    if (rows.length === 0) return { success: true, count: 0 };
+
+    const CHUNK_SIZE = 50;
+    let syncedCount = 0;
+
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase
+        .from('matches')
+        .upsert(chunk, { onConflict: 'id' });
+
+      if (error) {
+        // Tentativa de fallback se houver incompatibilidade de colunas
+        const minimalChunk = chunk.map(r => ({
+          id: r.id,
+          data: r.data,
+          updated_at: r.updated_at
+        }));
+        const { error: fbErr } = await supabase
+          .from('matches')
+          .upsert(minimalChunk, { onConflict: 'id' });
+
+        if (fbErr) {
+          console.warn('[Supabase] Aviso ao persistir partidas na nuvem:', fbErr.message);
+          return { success: false, error: fbErr.message };
+        }
+      }
+      syncedCount += chunk.length;
+    }
+
+    return { success: true, count: syncedCount };
+  } catch (err) {
+    console.warn('[Supabase] Falha ao enviar partidas para a nuvem:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+/**
+ * Sincroniza o cofre de partidas com o Supabase
+ */
+export async function syncVaultToSupabase(matches) {
+  return await upsertMatchesToSupabase(matches);
+}
+

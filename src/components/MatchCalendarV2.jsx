@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import {
   Calendar,
   Clock,
@@ -28,6 +28,8 @@ import {
   ExternalLink,
   Sliders,
   Trophy,
+  Download,
+  Upload,
   X
 } from 'lucide-react';
 import {
@@ -36,6 +38,7 @@ import {
   FINISHED_STATUS_CODES,
   getStoredMatchesV2,
   saveStoredMatchesV2,
+  mergeMatchesIntoVault,
   getStoredReportsV2,
   saveStoredReportV2,
   syncLeagueFixtures,
@@ -47,6 +50,10 @@ import {
   isMatchFinishedOrPast,
   getStartOfToday
 } from '../services/apiFootballV2Service';
+import {
+  fetchMatchesFromSupabase,
+  syncVaultToSupabase
+} from '../services/supabaseService';
 import ErrorBoundary from './ErrorBoundary';
 import PostMatchReportModal from './PostMatchReportModal';
 import QuickMatchReportModal from './QuickMatchReportModal';
@@ -364,14 +371,128 @@ export default function MatchCalendarV2({
   const [loadingLineupMatchId, setLoadingLineupMatchId] = useState(null);
   const [viewPdfReport, setViewPdfReport] = useState(null);
 
+  // Referência para o input de arquivo do Importar Cofre
+  const fileInputRef = useRef(null);
+
   // Dispara toast temporário
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Carregamento inicial defensivo do cofre local
+  // Exportar Cofre completo em arquivo .json
+  const handleExportVault = () => {
+    try {
+      const currentMatches = getStoredMatchesV2();
+      const currentReports = getStoredReportsV2();
+
+      const backupData = {
+        version: '2.0',
+        exportedAt: new Date().toISOString(),
+        totalMatches: currentMatches.length,
+        totalReports: currentReports.length,
+        matches: currentMatches,
+        reports: currentReports
+      };
+
+      const jsonString = JSON.stringify(backupData, null, 2);
+      const blob = new Blob([jsonString], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = 'cofre_agenda_backup.json';
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+
+      showToast(`Cofre exportado com sucesso! (${currentMatches.length} partidas salvas)`);
+    } catch (err) {
+      console.error('[MatchCalendarV2] Erro ao exportar cofre:', err);
+      showToast('Erro ao exportar cofre: ' + err.message);
+    }
+  };
+
+  // Importar Cofre a partir de arquivo .json com merge seguro
+  const handleImportVault = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const text = event.target?.result;
+        if (!text || typeof text !== 'string') {
+          throw new Error('Arquivo vazio ou ilegível');
+        }
+
+        const data = JSON.parse(text);
+        let incomingMatches = [];
+        let incomingReports = [];
+
+        if (Array.isArray(data)) {
+          incomingMatches = data;
+        } else if (data && typeof data === 'object') {
+          if (Array.isArray(data.matches)) incomingMatches = data.matches;
+          else if (Array.isArray(data.matchesVault)) incomingMatches = data.matchesVault;
+          else if (Array.isArray(data.radar_v2_matches_repository)) incomingMatches = data.radar_v2_matches_repository;
+
+          if (Array.isArray(data.reports)) incomingReports = data.reports;
+          else if (Array.isArray(data.radar_v2_reports)) incomingReports = data.radar_v2_reports;
+          else if (Array.isArray(data.scout_match_reports)) incomingReports = data.scout_match_reports;
+        }
+
+        if (incomingMatches.length === 0 && incomingReports.length === 0) {
+          showToast('Nenhuma partida ou relatório válido encontrado no arquivo JSON.');
+          return;
+        }
+
+        // 1. Merge defensivo e cumulativo das partidas no cofre local
+        let mergeResult = { updatedCount: 0, newCount: 0, totalCount: matches.length };
+        if (incomingMatches.length > 0) {
+          mergeResult = mergeMatchesIntoVault(incomingMatches);
+        }
+
+        // 2. Preserva relatórios concluídos
+        if (incomingReports.length > 0) {
+          incomingReports.forEach(rep => {
+            saveStoredReportV2(rep);
+          });
+        }
+
+        // 3. Atualiza estado da interface imediatamente
+        const updatedMatches = getStoredMatchesV2();
+        const updatedReports = getStoredReportsV2();
+        setMatches(updatedMatches);
+        setReports(updatedReports);
+
+        // 4. Sincronização em Nuvem (Supabase)
+        syncVaultToSupabase(updatedMatches).catch(err => {
+          console.warn('[MatchCalendarV2] Falha no sync com Supabase pós-importação:', err);
+        });
+
+        showToast(`Cofre importado com sucesso! (${mergeResult.updatedCount || 0} atualizados, ${mergeResult.newCount || 0} novos jogos inseridos)`);
+      } catch (err) {
+        console.error('[MatchCalendarV2] Erro ao importar cofre:', err);
+        showToast('Erro ao ler arquivo JSON: ' + err.message);
+      } finally {
+        if (e.target) e.target.value = '';
+      }
+    };
+
+    reader.onerror = () => {
+      showToast('Falha ao abrir arquivo.');
+      if (e.target) e.target.value = '';
+    };
+
+    reader.readAsText(file);
+  };
+
+  // Carregamento inicial defensivo do cofre local e sincronização em nuvem (Supabase)
   useEffect(() => {
+    let isMounted = true;
+
+    // 1. Carrega imediatamente do cofre local
     try {
       const clean = getStoredMatchesV2();
       setMatches(clean);
@@ -384,8 +505,35 @@ export default function MatchCalendarV2({
       setReports(Array.isArray(loadedReports) ? loadedReports : []);
     } catch (_) {}
 
-    // Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
+    // 2. Sincronização em Nuvem (Supabase) - garante paridade entre Localhost e Vercel
+    async function initCloudSync() {
+      try {
+        const remoteMatches = await fetchMatchesFromSupabase();
+        if (isMounted && Array.isArray(remoteMatches)) {
+          if (remoteMatches.length > 0) {
+            mergeMatchesIntoVault(remoteMatches);
+            const merged = getStoredMatchesV2();
+            setMatches(merged);
+          } else {
+            const currentLocal = getStoredMatchesV2();
+            if (currentLocal.length > 0) {
+              await syncVaultToSupabase(currentLocal);
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[MatchCalendarV2] Sincronização inicial com Supabase:', err);
+      }
+    }
+
+    initCloudSync();
+
+    // 3. Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
     handleSyncAll();
+
+    return () => {
+      isMounted = false;
+    };
   }, []);
 
   // Sincronizar uma liga específica por janela móvel dinâmica (-3 a +7 dias)
@@ -403,6 +551,7 @@ export default function MatchCalendarV2({
       if (res.success) {
         const updated = getStoredMatchesV2();
         setMatches(updated);
+        syncVaultToSupabase(updated).catch(() => {});
         showToast(`Sincronização concluída: ${res.updatedCount || 0} jogos atualizados, ${res.newCount || 0} novas partidas encontradas.`);
       } else {
         setApiError(res.error || 'Nenhum jogo presente ou futuro encontrado para esta liga.');
@@ -425,6 +574,7 @@ export default function MatchCalendarV2({
       const res = await syncAllMonitoredLeagues((msg) => setSyncProgress(msg));
       const updated = getStoredMatchesV2();
       setMatches(updated);
+      syncVaultToSupabase(updated).catch(() => {});
 
       if (res.success) {
         showToast(`Sincronização concluída: ${res.updatedCount || 0} jogos atualizados, ${res.newCount || 0} novas partidas encontradas.`);
@@ -448,6 +598,7 @@ export default function MatchCalendarV2({
     });
     setMatches(updated);
     saveStoredMatchesV2(updated);
+    syncVaultToSupabase(updated).catch(() => {});
     setSelectedTab('encerrados');
     showToast(`Partida "${match.homeTeam} x ${match.awayTeam}" movida para Jogos Encerrados.`);
     await handleOpenCreateReport({ ...match, isArchived: true });
@@ -464,6 +615,7 @@ export default function MatchCalendarV2({
     });
     setMatches(updated);
     saveStoredMatchesV2(updated);
+    syncVaultToSupabase(updated).catch(() => {});
     showToast(`Partida "${match.homeTeam} x ${match.awayTeam}" retornada para Próximos.`);
   };
 
@@ -749,6 +901,32 @@ export default function MatchCalendarV2({
 
             {/* AÇÕES PRINCIPAIS */}
             <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+              <button
+                onClick={handleExportVault}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                title="Exportar backup completo do cofre de jogos (.json)"
+              >
+                <Download className="w-3.5 h-3.5 text-blue-400" />
+                <span>📤 Exportar Cofre</span>
+              </button>
+
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
+                title="Importar backup do cofre de jogos (.json)"
+              >
+                <Upload className="w-3.5 h-3.5 text-emerald-400" />
+                <span>📥 Importar Cofre</span>
+              </button>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".json"
+                onChange={handleImportVault}
+                className="hidden"
+              />
+
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
