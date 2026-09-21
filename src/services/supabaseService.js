@@ -502,3 +502,58 @@ export async function syncVaultToSupabase(matches) {
   return await upsertMatchesToSupabase(matches);
 }
 
+/**
+ * Constrói um objeto de partida completo a partir de um relatório de scout salvo no Supabase
+ */
+export function buildMatchFromReport(report) {
+  if (!report) return null;
+  const matchId = String(report.fixtureId || report.matchId || report.match_id || report.id || '');
+  const [mNamePartida, vNamePartida] = (report.partida || '').split(' x ').map(s => s ? s.trim() : '');
+  const homeName = report.homeTeam || report.home_team || report.mandante?.nome || mNamePartida || 'Mandante';
+  const awayName = report.awayTeam || report.away_team || report.visitante?.nome || vNamePartida || 'Visitante';
+
+  let hScore = report.placarMandante ?? report.placarObj?.mandante ?? null;
+  let aScore = report.placarVisitante ?? report.placarObj?.visitante ?? null;
+  if (hScore === null && (report.score || report.placar)) {
+    const raw = String(report.score || report.placar);
+    const parts = raw.split('x').map(s => parseInt(s ? s.trim() : '0', 10));
+    if (!isNaN(parts[0])) hScore = parts[0];
+    if (!isNaN(parts[1])) aScore = parts[1];
+  }
+
+  const dateStr = report.data || report.match_date || (report.created_at ? report.created_at.split('T')[0] : '2026-09-20');
+
+  return {
+    id: matchId,
+    fixtureId: matchId,
+    date: dateStr,
+    datetime: `${dateStr}T16:00:00Z`,
+    time: '16:00',
+    venue: report.local || report.estadio || 'Estádio Oficial',
+    city: '',
+    leagueId: 72,
+    leagueName: report.competicao || report.campeonato || report.tournament || 'Competição Oficial',
+    season: 2026,
+    round: report.rodada || report.round || 'Rodada Oficial',
+    homeTeam: homeName,
+    awayTeam: awayName,
+    homeScore: hScore ?? 0,
+    awayScore: aScore ?? 0,
+    scoreFulltime: { home: hScore ?? 0, away: aScore ?? 0 },
+    status: 'FT',
+    statusShort: 'FT',
+    isLive: false,
+    isFinished: true,
+    isUpcoming: false,
+    isArchived: true,
+    hasReport: true,
+    reportStatus: 'CONCLUIDO',
+    reportId: report.id,
+    scoutReport: report,
+    mandante: { nome: homeName },
+    visitante: { nome: awayName },
+    placar: { mandante: hScore ?? 0, visitante: aScore ?? 0 }
+  };
+}
+
+

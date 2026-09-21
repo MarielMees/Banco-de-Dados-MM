@@ -28,8 +28,6 @@ import {
   ExternalLink,
   Sliders,
   Trophy,
-  Download,
-  Upload,
   X
 } from 'lucide-react';
 import {
@@ -52,7 +50,10 @@ import {
 } from '../services/apiFootballV2Service';
 import {
   fetchMatchesFromSupabase,
-  syncVaultToSupabase
+  syncVaultToSupabase,
+  fetchMatchReportsFromSupabase,
+  upsertMatchReportToSupabase,
+  buildMatchFromReport
 } from '../services/supabaseService';
 import ErrorBoundary from './ErrorBoundary';
 import PostMatchReportModal from './PostMatchReportModal';
@@ -371,321 +372,118 @@ export default function MatchCalendarV2({
   const [loadingLineupMatchId, setLoadingLineupMatchId] = useState(null);
   const [viewPdfReport, setViewPdfReport] = useState(null);
 
-  // Referência para o input de arquivo do Importar Cofre
-  const fileInputRef = useRef(null);
-
   // Dispara toast temporário
   const showToast = (msg) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // 1. Exportação Completa: Vasculha absolutamente todas as chaves do localStorage (Jogos, Súmulas e Relatórios)
-  const handleExportVault = () => {
-    try {
-      const localStorageDump = {};
-      const allMatchesMap = new Map();
-      const allReportsMap = new Map();
-
-      // a) Vasculha todas as chaves do localStorage do navegador
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
-        if (!key) continue;
-        const val = localStorage.getItem(key);
-        if (!val) continue;
-
-        const lower = key.toLowerCase();
-        const isMatchKey = lower.includes('matches') || lower.includes('vault') || lower.includes('fotmob') || lower.includes('api_football') || lower.includes('agenda');
-        const isReportKey = lower.includes('report') || lower.includes('relatorio') || lower.includes('relatorios') || lower.includes('scout_notes');
-        const isOtherScoutKey = lower.includes('scout') || lower.includes('radar') || lower.includes('players') || lower.includes('coaches');
-
-        if (isMatchKey || isReportKey || isOtherScoutKey) {
-          localStorageDump[key] = val;
-
-          try {
-            const parsed = JSON.parse(val);
-            if (Array.isArray(parsed)) {
-              if (isMatchKey) {
-                parsed.forEach(m => {
-                  const mId = m?.id || m?.fixtureId || m?.fixture?.id;
-                  if (mId) allMatchesMap.set(String(mId), m);
-                });
-              }
-              if (isReportKey) {
-                parsed.forEach(r => {
-                  const rId = r?.id || r?.fixtureId || r?.matchId || r?.match_id;
-                  if (rId) allReportsMap.set(String(rId), r);
-                });
-              }
-            }
-          } catch (_) {}
-        }
-      }
-
-      // b) Garante que getStoredMatchesV2() e getStoredReportsV2() estejam consolidados
-      try {
-        const v2Matches = getStoredMatchesV2();
-        v2Matches.forEach(m => {
-          const mId = m?.id || m?.fixtureId || m?.fixture?.id;
-          if (mId) {
-            const existing = allMatchesMap.get(String(mId)) || {};
-            allMatchesMap.set(String(mId), { ...existing, ...m });
-          }
-        });
-
-        const v2Reports = getStoredReportsV2();
-        v2Reports.forEach(r => {
-          const rId = r?.id || r?.fixtureId || r?.matchId || r?.match_id;
-          if (rId) {
-            const existing = allReportsMap.get(String(rId)) || {};
-            allReportsMap.set(String(rId), { ...existing, ...r });
-          }
-        });
-      } catch (_) {}
-
-      const matchesList = Array.from(allMatchesMap.values());
-      const reportsList = Array.from(allReportsMap.values());
-
-      // c) Consolida chaves canônicas no dump
-      localStorageDump['radar_v2_matches_repository'] = JSON.stringify(matchesList);
-      localStorageDump['matchesVault'] = JSON.stringify(matchesList);
-      localStorageDump['radar_v2_reports'] = JSON.stringify(reportsList);
-      localStorageDump['scout_match_reports'] = JSON.stringify(reportsList);
-      localStorageDump['matchReports'] = JSON.stringify(reportsList);
-
-      const backupData = {
-        type: 'FULL_AGENDA_VAULT_BACKUP',
-        version: '3.0',
-        exportedAt: new Date().toISOString(),
-        totalMatches: matchesList.length,
-        totalReports: reportsList.length,
-        matches: matchesList,
-        reports: reportsList,
-        localStorageDump
-      };
-
-      const jsonString = JSON.stringify(backupData, null, 2);
-      const blob = new Blob([jsonString], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = 'backup_completo_agenda.json';
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(url);
-
-      showToast(`Backup completo gerado! (${matchesList.length} jogos, ${reportsList.length} relatórios)`);
-    } catch (err) {
-      console.error('[MatchCalendarV2] Erro na exportação completa:', err);
-      alert('Erro ao exportar cofre: ' + err.message);
-    }
-  };
-
-  // 2. Importação com Merge e Atualização Instantânea: Restaura tudo no localStorage, Supabase e recarrega a página
-  const handleImportVault = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-      try {
-        const text = event.target?.result;
-        if (!text || typeof text !== 'string') {
-          throw new Error('Arquivo vazio ou ilegível');
-        }
-
-        const data = JSON.parse(text);
-
-        // a) Percorre cada chave presente no dump e grava no localStorage com merge por ID
-        if (data.localStorageDump && typeof data.localStorageDump === 'object') {
-          Object.entries(data.localStorageDump).forEach(([k, rawVal]) => {
-            if (!k || rawVal === undefined || rawVal === null) return;
-            try {
-              const strVal = typeof rawVal === 'string' ? rawVal : JSON.stringify(rawVal);
-              const existingRaw = localStorage.getItem(k);
-
-              if (existingRaw) {
-                try {
-                  const existingParsed = JSON.parse(existingRaw);
-                  const incomingParsed = JSON.parse(strVal);
-
-                  if (Array.isArray(existingParsed) && Array.isArray(incomingParsed)) {
-                    const mapById = new Map();
-                    existingParsed.forEach(item => {
-                      const id = item && (item.id || item.fixtureId);
-                      if (id) mapById.set(String(id), item);
-                    });
-                    incomingParsed.forEach(item => {
-                      const id = item && (item.id || item.fixtureId);
-                      if (id) {
-                        const prev = mapById.get(String(id)) || {};
-                        mapById.set(String(id), { ...prev, ...item });
-                      } else {
-                        mapById.set(String(Math.random()), item);
-                      }
-                    });
-                    localStorage.setItem(k, JSON.stringify(Array.from(mapById.values())));
-                    return;
-                  }
-                } catch (_) {}
-              }
-
-              localStorage.setItem(k, strVal);
-            } catch (kErr) {
-              console.warn('[MatchCalendarV2] Erro ao restaurar chave:', k, kErr);
-            }
-          });
-        }
-
-        // b) Extrai arrays unificados de partidas e relatórios
-        let incomingMatches = [];
-        let incomingReports = [];
-
-        if (Array.isArray(data)) {
-          incomingMatches = data;
-        } else if (data && typeof data === 'object') {
-          if (Array.isArray(data.matches)) incomingMatches = data.matches;
-          else if (Array.isArray(data.matchesVault)) incomingMatches = data.matchesVault;
-          else if (Array.isArray(data.radar_v2_matches_repository)) incomingMatches = data.radar_v2_matches_repository;
-
-          if (Array.isArray(data.reports)) incomingReports = data.reports;
-          else if (Array.isArray(data.radar_v2_reports)) incomingReports = data.radar_v2_reports;
-          else if (Array.isArray(data.scout_match_reports)) incomingReports = data.scout_match_reports;
-          else if (Array.isArray(data.matchReports)) incomingReports = data.matchReports;
-        }
-
-        // c) Merge seguro das partidas no cofre local (preserva relatórios concluídos e jogos cadastrados)
-        if (incomingMatches.length > 0) {
-          mergeMatchesIntoVault(incomingMatches);
-        }
-
-        // d) Salva e vincula relatórios nas chaves canônicas
-        if (incomingReports.length > 0) {
-          incomingReports.forEach(rep => {
-            saveStoredReportV2(rep);
-          });
-        }
-
-        // e) Garante que os relatórios estejam associados às partidas no cofre
-        const currentMatches = getStoredMatchesV2();
-        const currentReports = getStoredReportsV2();
-
-        const linkedMatches = currentMatches.map(m => {
-          const rep = currentReports.find(r => 
-            (r?.fixtureId && String(r.fixtureId) === String(m.id)) ||
-            (r?.matchId && String(r.matchId) === String(m.id)) ||
-            (r?.match_id && String(r.match_id) === String(m.id)) ||
-            (m.fixtureId && r?.fixtureId && String(r.fixtureId) === String(m.fixtureId)) ||
-            (m.reportId && String(r?.id) === String(m.reportId)) ||
-            (r?.id && String(r.id) === String(m.id)) ||
-            (r?.partida && m.homeTeam && m.awayTeam && r.partida.toLowerCase().includes(m.homeTeam.toLowerCase()) && r.partida.toLowerCase().includes(m.awayTeam.toLowerCase()))
-          ) || m.scoutReport;
-
-          if (rep) {
-            return {
-              ...m,
-              hasReport: true,
-              reportStatus: 'CONCLUIDO',
-              reportId: rep.id || m.id,
-              scoutReport: rep,
-              isArchived: true // Partidas com relatório completo ficam no histórico
-            };
-          }
-          return m;
-        });
-
-        saveStoredMatchesV2(linkedMatches);
-
-        // Atualiza chaves legadas e padrão para sincronização perfeita de tela
-        try {
-          const existingScoutReports = JSON.parse(localStorage.getItem('scout_match_reports') || '[]');
-          const mergedScoutReports = [...currentReports];
-          existingScoutReports.forEach(er => {
-            if (!mergedScoutReports.some(mr => String(mr.id) === String(er.id))) {
-              mergedScoutReports.push(er);
-            }
-          });
-          localStorage.setItem('scout_match_reports', JSON.stringify(mergedScoutReports));
-          localStorage.setItem('matchReports', JSON.stringify(mergedScoutReports));
-          localStorage.setItem('radar_match_reports', JSON.stringify(mergedScoutReports));
-        } catch (_) {}
-
-        // f) Sincronização em Nuvem (Supabase)
-        try {
-          await syncVaultToSupabase(linkedMatches);
-        } catch (_) {}
-
-        const finalMatchesCount = linkedMatches.length;
-        const finalReportsCount = currentReports.length;
-
-        // g) Mostra alert de sucesso informando quantos jogos e relatórios foram recuperados
-        alert(
-          `Backup completo importado com sucesso!\n\n` +
-          `• ${finalMatchesCount} partidas salvas no cofre\n` +
-          `• ${finalReportsCount} relatórios completos recuperados\n\n` +
-          `A página será recarregada para atualizar a Agenda e exibir os botões de relatório.`
-        );
-
-        // h) Force reload suave para leitura imediata dos dados importados
-        window.location.reload();
-      } catch (err) {
-        console.error('[MatchCalendarV2] Erro na importação:', err);
-        alert('Erro ao importar backup: ' + err.message);
-      } finally {
-        if (e.target) e.target.value = '';
-      }
-    };
-
-    reader.onerror = () => {
-      alert('Falha ao abrir arquivo.');
-      if (e.target) e.target.value = '';
-    };
-
-    reader.readAsText(file);
-  };
-
-  // Carregamento inicial defensivo do cofre local e sincronização em nuvem (Supabase)
+  // Sincronização centralizada com o Supabase e Migração Automática Silenciosa
   useEffect(() => {
     let isMounted = true;
 
-    // 1. Carrega imediatamente do cofre local
-    try {
-      const clean = getStoredMatchesV2();
-      setMatches(clean);
-    } catch (e) {
-      console.warn('[MatchCalendarV2] Erro ao carregar cache local:', e);
-    }
+    async function syncCloudAndMigrate() {
+      // 1. Carrega imediatamente o cache local para a interface não piscar em branco
+      const localMatches = getStoredMatchesV2() || [];
+      const localReports = getStoredReportsV2() || [];
 
-    try {
-      const loadedReports = getStoredReportsV2();
-      setReports(Array.isArray(loadedReports) ? loadedReports : []);
-    } catch (_) {}
+      if (localMatches.length > 0) setMatches(localMatches);
+      if (localReports.length > 0) setReports(localReports);
 
-    // 2. Sincronização em Nuvem (Supabase) - garante paridade entre Localhost e Vercel
-    async function initCloudSync() {
+      // 2. Migração Silenciosa Automática: Se houver dados em localStorage, faz upload silencioso para o Supabase
       try {
-        const remoteMatches = await fetchMatchesFromSupabase();
-        if (isMounted && Array.isArray(remoteMatches)) {
-          if (remoteMatches.length > 0) {
-            mergeMatchesIntoVault(remoteMatches);
-            const merged = getStoredMatchesV2();
-            setMatches(merged);
+        if (localReports.length > 0) {
+          localReports.forEach(rep => {
+            upsertMatchReportToSupabase(rep).catch(() => {});
+          });
+        }
+        if (localMatches.length > 0) {
+          syncVaultToSupabase(localMatches).catch(() => {});
+        }
+      } catch (_) {}
+
+      // 3. Consulta em tempo real das tabelas centrais do Supabase (Nuvem é a autoridade máxima)
+      try {
+        const [remoteReports, remoteMatches] = await Promise.all([
+          fetchMatchReportsFromSupabase(),
+          fetchMatchesFromSupabase()
+        ]);
+
+        if (!isMounted) return;
+
+        // a) Consolidação de Relatórios: Nuvem + Local
+        let activeReports = [...localReports];
+        if (Array.isArray(remoteReports) && remoteReports.length > 0) {
+          const reportMap = new Map();
+          activeReports.forEach(r => {
+            const rId = String(r?.id || r?.fixtureId || r?.matchId || '');
+            if (rId) reportMap.set(rId, r);
+          });
+          remoteReports.forEach(r => {
+            const rId = String(r?.id || r?.fixtureId || r?.matchId || '');
+            if (rId) reportMap.set(rId, r);
+          });
+          activeReports = Array.from(reportMap.values());
+          setReports(activeReports);
+
+          try {
+            localStorage.setItem('radar_v2_reports', JSON.stringify(activeReports));
+            localStorage.setItem('scout_match_reports', JSON.stringify(activeReports));
+            localStorage.setItem('matchReports', JSON.stringify(activeReports));
+          } catch (_) {}
+        }
+
+        // b) Consolidação de Partidas: Nuvem + Local
+        let activeMatches = [...localMatches];
+        if (Array.isArray(remoteMatches) && remoteMatches.length > 0) {
+          mergeMatchesIntoVault(remoteMatches);
+          activeMatches = getStoredMatchesV2();
+        }
+
+        // c) Garante que cada relatório (como o do Goiás x Avaí) tenha sua partida correspondente no cofre com status CONCLUIDO
+        const matchMap = new Map();
+        activeMatches.forEach(m => {
+          if (m?.id) matchMap.set(String(m.id), m);
+        });
+
+        activeReports.forEach(rep => {
+          const rId = String(rep.fixtureId || rep.matchId || rep.match_id || rep.id || '');
+          const existing = matchMap.get(rId) || Array.from(matchMap.values()).find(m => 
+            (rep.fixtureId && String(m.id) === String(rep.fixtureId)) ||
+            (rep.partida && m.homeTeam && m.awayTeam && rep.partida.toLowerCase().includes(m.homeTeam.toLowerCase()) && rep.partida.toLowerCase().includes(m.awayTeam.toLowerCase()))
+          );
+
+          if (existing) {
+            matchMap.set(String(existing.id), {
+              ...existing,
+              hasReport: true,
+              reportStatus: 'CONCLUIDO',
+              reportId: rep.id || existing.id,
+              scoutReport: rep,
+              isArchived: true
+            });
           } else {
-            const currentLocal = getStoredMatchesV2();
-            if (currentLocal.length > 0) {
-              await syncVaultToSupabase(currentLocal);
+            const synthesized = buildMatchFromReport(rep);
+            if (synthesized) {
+              matchMap.set(String(synthesized.id), synthesized);
             }
           }
-        }
+        });
+
+        const finalMatches = Array.from(matchMap.values());
+        setMatches(finalMatches);
+        saveStoredMatchesV2(finalMatches);
+
+        // Se o Supabase ainda não tiver as partidas gravadas na tabela, envia silenciosamente
+        syncVaultToSupabase(finalMatches).catch(() => {});
       } catch (err) {
-        console.warn('[MatchCalendarV2] Sincronização inicial com Supabase:', err);
+        console.warn('[MatchCalendarV2] Erro na sincronização com Supabase:', err);
       }
     }
 
-    initCloudSync();
+    syncCloudAndMigrate();
 
-    // 3. Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
+    // 4. Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
     handleSyncAll();
 
     return () => {
@@ -847,16 +645,18 @@ export default function MatchCalendarV2({
       return m;
     });
     setMatches(updated);
-    saveStoredMatchesV2(updated);
+    // 3. Salva diretamente no Supabase (relatório e partida)
+    upsertMatchReportToSupabase(safePayload).catch(e => console.warn('[Supabase] Erro ao salvar relatório:', e));
+    syncVaultToSupabase(updated).catch(() => {});
 
-    // 3. Salva no repositório padrão de relatórios ('matchReports' / 'scout_match_reports') integrando com Seleção do Campeonato e Lista Geral
+    // 4. Salva no repositório padrão de relatórios ('matchReports' / 'scout_match_reports') integrando com Seleção do Campeonato e Lista Geral
     if (onSaveMatchReport) {
       onSaveMatchReport(safePayload, provisorioPlayers, provisorioCoaches);
     }
 
     setIsQuickReportOpen(false);
     setQuickReportMatchData(null);
-    showToast('Relatório de Campo salvo com sucesso no banco oficial!');
+    showToast('Relatório de Campo salvo e sincronizado na nuvem!');
   };
 
   // Abrir fluxo de Relatório Completo Pós-Jogo
@@ -919,7 +719,8 @@ export default function MatchCalendarV2({
           hasReport: true,
           reportStatus: 'CONCLUIDO',
           reportId: safePayload.id,
-          scoutReport: safePayload
+          scoutReport: safePayload,
+          isArchived: true
         };
       }
       return m;
@@ -927,14 +728,18 @@ export default function MatchCalendarV2({
     setMatches(updated);
     saveStoredMatchesV2(updated);
 
-    // 3. Persistência direta em localStorage 'matchReports' e 'scout_match_reports' para retrocompatibilidade
+    // 3. Salva diretamente no Supabase (relatório e partida na nuvem)
+    upsertMatchReportToSupabase(safePayload).catch(e => console.warn('[Supabase] Erro ao salvar relatório:', e));
+    syncVaultToSupabase(updated).catch(() => {});
+
+    // 4. Persistência direta em localStorage 'matchReports' e 'scout_match_reports' para retrocompatibilidade
     try {
       const storedM = JSON.parse(localStorage.getItem('matchReports') || '[]');
       const filteredM = storedM.filter(r => String(r.id) !== String(safePayload.id));
       localStorage.setItem('matchReports', JSON.stringify([safePayload, ...filteredM]));
     } catch (_) {}
 
-    // 4. Notifica o sistema principal (App.jsx) para salvar em scout_match_reports/radar_match_reports e auto-cadastrar atletas estrela (★) no banco
+    // 5. Notifica o sistema principal (App.jsx) para salvar em scout_match_reports/radar_match_reports e auto-cadastrar atletas estrela (★) no banco
     if (onSaveMatchReport) {
       onSaveMatchReport(safePayload);
     }
@@ -1058,32 +863,6 @@ export default function MatchCalendarV2({
 
             {/* AÇÕES PRINCIPAIS */}
             <div className="flex flex-wrap items-center gap-2.5 shrink-0">
-              <button
-                onClick={handleExportVault}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
-                title="Exportar backup completo do cofre de jogos (.json)"
-              >
-                <Download className="w-3.5 h-3.5 text-blue-400" />
-                <span>📤 Exportar Cofre</span>
-              </button>
-
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer active:scale-95 shadow-sm"
-                title="Importar backup do cofre de jogos (.json)"
-              >
-                <Upload className="w-3.5 h-3.5 text-emerald-400" />
-                <span>📥 Importar Cofre</span>
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept=".json"
-                onChange={handleImportVault}
-                className="hidden"
-              />
-
               <button
                 onClick={() => setIsSettingsOpen(true)}
                 className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 rounded-xl text-xs font-semibold transition flex items-center gap-1.5 cursor-pointer"
