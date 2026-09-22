@@ -676,9 +676,9 @@ export default function QuickMatchReportModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 backdrop-blur-sm p-2 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/85 backdrop-blur-sm p-0 sm:p-4 overflow-y-auto animate-in fade-in duration-150">
       <div 
-        className="bg-[#0b121e] border border-amber-500/40 rounded-2xl w-full max-w-xl max-h-[94vh] flex flex-col shadow-2xl shadow-black overflow-hidden my-auto"
+        className="bg-[#0b121e] border border-amber-500/40 rounded-none sm:rounded-2xl w-full max-w-xl h-full sm:h-auto sm:max-h-[94vh] flex flex-col shadow-2xl shadow-black overflow-hidden my-auto"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Topo Mobile-Friendly com Destaque Neon Âmbar ou Ciano/Esmeralda */}
@@ -726,7 +726,7 @@ export default function QuickMatchReportModal({
         </div>
 
         {/* Formulário com Scroll Vertical Suave */}
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-4 sm:p-5 space-y-4 text-xs">
+        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-3 sm:p-5 space-y-4 text-xs">
           {/* BLOCO 1: IDENTIFICAÇÃO DO JOGO */}
           <div className="bg-[#10192a] border border-slate-700/70 rounded-xl p-3.5 space-y-3">
             <div className="text-[11px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
@@ -1523,10 +1523,10 @@ export default function QuickMatchReportModal({
           </div>
 
           {/* Botão Inferior Grande de Salvar */}
-          <div className="pt-2 sticky bottom-0 bg-[#0b121e] pb-1">
+          <div className="pt-3 pb-3 sm:pb-1 px-3 sm:px-0 sticky bottom-0 bg-[#0b121e] border-t border-slate-800/80 sm:border-0 z-20">
             <button
               type="submit"
-              className={'w-full py-3 rounded-xl font-black text-sm uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99] ' + (
+              className={'w-full py-3 min-h-[48px] rounded-xl font-black text-sm uppercase tracking-wider shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-[0.99] ' + (
                 isEditMode
                   ? 'bg-gradient-to-r from-emerald-400 to-teal-500 hover:from-emerald-300 hover:to-teal-400 text-slate-950 shadow-emerald-500/20'
                   : 'bg-gradient-to-r from-amber-400 to-amber-500 hover:from-amber-300 hover:to-amber-400 text-slate-950 shadow-amber-500/20'

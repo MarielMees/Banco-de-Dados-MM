@@ -1207,11 +1207,11 @@ export default function PostMatchReportModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 sm:p-5 overflow-y-auto select-none">
-      <div className="bg-[#0b111c] border border-slate-800 rounded-2xl w-full max-w-[96vw] 2xl:max-w-7xl max-h-[94vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
+    <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-0 sm:p-5 overflow-y-auto select-none">
+      <div className="bg-[#0b111c] border border-slate-800 rounded-none sm:rounded-2xl w-full h-full sm:h-auto max-w-[96vw] 2xl:max-w-7xl sm:max-h-[94vh] flex flex-col shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200">
         
         {/* Cabeçalho do Modal Amplo */}
-        <div className="px-6 py-4 border-b border-slate-800 flex items-center justify-between bg-[#080d16] shrink-0">
+        <div className="px-4 sm:px-6 py-3.5 sm:py-4 border-b border-slate-800 flex items-center justify-between bg-[#080d16] shrink-0">
           <div className="flex items-center gap-3">
             <div className={'w-9 h-9 rounded-xl flex items-center justify-center ' + (
               isEditMode 
@@ -1245,7 +1245,7 @@ export default function PostMatchReportModal({
         </div>
 
         {/* Conteúdo com Scroll */}
-        <div className="p-6 space-y-6 overflow-y-auto flex-1 text-xs">
+        <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto flex-1 text-xs">
           
           {/* BLOCO 1: PLACAR E METADADOS EDITÁVEIS */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 shadow-md space-y-4">
@@ -1887,7 +1887,7 @@ export default function PostMatchReportModal({
         </div>
 
         {/* Rodapé com Ações */}
-        <div className="px-6 py-3.5 border-t border-slate-800 bg-[#080d16] flex items-center justify-between shrink-0">
+        <div className="px-4 sm:px-6 py-3 sm:py-3.5 border-t border-slate-800 bg-[#080d16] flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 shrink-0 sticky bottom-0 z-20">
           <div className="text-[11px] text-slate-400 flex items-center gap-2">
             {savedSuccess && (
               <span className="text-emerald-400 font-bold flex items-center gap-1 animate-in fade-in">
@@ -1896,18 +1896,18 @@ export default function PostMatchReportModal({
             )}
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-col-reverse sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full sm:w-auto">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+              className="w-full sm:w-auto px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer text-center"
             >
               Cancelar
             </button>
             <button
               type="button"
               onClick={handleSaveFullReport}
-              className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 flex items-center gap-2 transition cursor-pointer active:scale-95"
+              className="w-full sm:w-auto px-6 py-2.5 min-h-[44px] rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-slate-950 font-extrabold text-xs uppercase tracking-wider shadow-lg shadow-emerald-500/20 flex items-center justify-center gap-2 transition cursor-pointer active:scale-95"
             >
               <Save className="w-4 h-4 stroke-[2.5]" />
               <span>{isEditMode ? 'Salvar Alterações' : 'Salvar Relatório de Jogo Completo'}</span>

@@ -1493,7 +1493,7 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
       </header>
 
       {/* 2. O CAMPO DE FUTEBOL (CAMPOGRAMA VISUAL) */}
-      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-auto">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-hidden md:overflow-x-auto">
         {availableTournaments.length === 0 ? (
           <div className="w-full max-w-[760px] my-16 py-16 px-8 rounded-3xl bg-[#070e1b]/95 border border-emerald-500/30 shadow-2xl flex flex-col items-center justify-center text-center">
             <div className="w-16 h-16 rounded-2xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center mb-5 text-amber-400">
@@ -1507,7 +1507,7 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
             </p>
           </div>
         ) : (
-          <div ref={pitchRef} className="relative w-full max-w-[1400px] min-h-[1250px] h-[1280px] pt-6 rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
+          <div ref={pitchRef} className="relative w-full max-w-[1400px] h-[520px] sm:h-[620px] md:min-h-[1250px] md:h-[1280px] pt-3 md:pt-6 rounded-2xl md:rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
           {/* Textura sutil de faixas de grama */}
           <div
             className="absolute inset-0 opacity-15 pointer-events-none"
@@ -1517,20 +1517,20 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
           />
 
           {/* LINHAS DO GRAMADO */}
-          <div className="absolute inset-5 border border-emerald-400/25 rounded-xl pointer-events-none" />
-          <div className="absolute top-1/2 left-5 right-5 h-[1px] bg-emerald-400/25 -translate-y-1/2 pointer-events-none" />
-          <div className="absolute top-1/2 left-1/2 w-48 h-48 border border-emerald-400/25 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-            <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 -translate-y-1/2" />
+          <div className="absolute inset-3 md:inset-5 border border-emerald-400/25 rounded-lg md:rounded-xl pointer-events-none" />
+          <div className="absolute top-1/2 left-3 md:left-5 right-3 md:right-5 h-[1px] bg-emerald-400/25 -translate-y-1/2 pointer-events-none" />
+          <div className="absolute top-1/2 left-1/2 w-24 h-24 md:w-48 md:h-48 border border-emerald-400/25 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="absolute top-1/2 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 -translate-y-1/2" />
           </div>
 
           {/* Áreas do Campo */}
-          <div className="absolute top-5 left-1/2 -translate-x-1/2 w-[440px] h-36 border-b border-x border-emerald-400/25 pointer-events-none" />
-          <div className="absolute top-5 left-1/2 -translate-x-1/2 w-48 h-16 border-b border-x border-emerald-400/25 pointer-events-none" />
-          <div className="absolute top-28 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-[440px] h-36 border-t border-x border-emerald-400/25 pointer-events-none" />
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-48 h-16 border-t border-x border-emerald-400/25 pointer-events-none" />
-          <div className="absolute bottom-28 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-24 h-2 border-t-2 border-x-2 border-white/40 pointer-events-none" />
+          <div className="absolute top-3 md:top-5 left-1/2 -translate-x-1/2 w-[220px] md:w-[440px] h-16 md:h-36 border-b border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute top-3 md:top-5 left-1/2 -translate-x-1/2 w-24 md:w-48 h-8 md:h-16 border-b border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute top-12 md:top-28 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-[220px] md:w-[440px] h-16 md:h-36 border-t border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-24 md:w-48 h-8 md:h-16 border-t border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute bottom-12 md:bottom-28 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-14 md:w-24 h-1 md:h-2 border-t-2 border-x-2 border-white/40 pointer-events-none" />
 
           {/* 3. DISPOSIÇÃO DAS POSIÇÕES NA FORMAÇÃO ATIVA */}
           {activeFormation.positions.map((pos) => {
@@ -1551,8 +1551,8 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
                 }`}
                 style={{ top: posCoords.top, left: posCoords.left }}
               >
-                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO */}
-                <div className={`w-[220px] min-w-[220px] max-w-[230px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
+                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) */}
+                <div className={`hidden md:block w-[220px] min-w-[220px] max-w-[230px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
                   isBeingMoved
                     ? 'border-2 border-amber-400 shadow-amber-500/30 scale-105 ring-2 ring-amber-500/20'
                     : 'border-slate-700/80 hover:border-amber-400/80'
@@ -1771,6 +1771,62 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
                     )}
                   </div>
                 </div>
+
+                {/* NÓ TÁTICO COMPACTO MOBILE TOUCH (< 768px) */}
+                <div
+                  className="md:hidden flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
+                  style={{ minWidth: '56px', minHeight: '56px' }}
+                  onClick={() => {
+                    setAssigningPos(pos)
+                    setPlayerSearch('')
+                  }}
+                  title={pos.label}
+                >
+                  {titular ? (
+                    (() => {
+                      const fullTitular = allPlayersList.find(p => p.id === titular.id || (p.nome && titular.nome && p.nome.toLowerCase().trim() === titular.nome.toLowerCase().trim())) || titular
+                      const anoFormatado = formatAthleteBirthYear(fullTitular)
+                      const clubeFormatado = fullTitular.clubeAtual || fullTitular.clube || fullTitular.ca || titular.clube || ''
+                      const matchHighlightData = extractedPlayers.find(ep => String(ep.id) === String(titular.id) || (ep.nome && titular.nome && ep.nome.toLowerCase().trim() === titular.nome.toLowerCase().trim()))
+                      const mediaVal = matchHighlightData ? matchHighlightData.mediaNota : (titular.mediaNota !== undefined && titular.mediaNota !== null ? titular.mediaNota : (titular.mediaNotas || titular.mediaGeral))
+                      const destaquesVal = matchHighlightData ? matchHighlightData.destaquesCount : (titular.destaquesCount ?? 0)
+
+                      return (
+                        <>
+                          <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-amber-500 via-amber-600 to-amber-800 border-2 border-amber-300 shadow-lg shadow-black/80 flex items-center justify-center">
+                            <span className="text-[10px] font-black text-slate-950 uppercase">{pos.label}</span>
+                            {destaquesVal > 0 && (
+                              <span className="absolute -top-1.5 -right-1.5 bg-amber-400 text-slate-950 text-[8px] font-black px-1 rounded-full border border-black shadow">
+                                ★{destaquesVal}
+                              </span>
+                            )}
+                            {mediaVal !== null && mediaVal !== undefined && (
+                              <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-slate-950 text-emerald-400 border border-emerald-500/50 text-[8px] font-black px-1 rounded font-mono shadow">
+                                {Number(mediaVal).toFixed(1)}
+                              </span>
+                            )}
+                          </div>
+                          <span className="mt-1 text-[10px] font-bold text-white max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                            {fullTitular.nome}
+                          </span>
+                          <span className="text-[8px] font-semibold text-amber-300/90 max-w-[65px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                            {clubeFormatado || anoFormatado || ''}
+                          </span>
+                        </>
+                      )
+                    })()
+                  ) : (
+                    <>
+                      <div className="w-10 h-10 rounded-full border-2 border-dashed border-amber-400/60 bg-slate-950/70 shadow-md flex flex-col items-center justify-center text-amber-400">
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span className="text-[8px] font-black uppercase text-amber-400/90">{pos.label}</span>
+                      </div>
+                      <span className="mt-0.5 text-[9px] font-semibold text-amber-400/70 max-w-[70px] truncate text-center">
+                        Vago
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
             )
           })}
@@ -1780,8 +1836,8 @@ export default function TournamentBestXI({ onBack, matchReports = [], players = 
 
       {/* 4. MODAL DE SELEÇÃO MANUAL DO BANCO */}
       {assigningPos && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#0b111c] border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-[#0b111c] border border-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             {/* Header Modal */}
             <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-[#080d16]">
               <div className="flex items-center gap-2">

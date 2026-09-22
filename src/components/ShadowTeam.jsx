@@ -976,7 +976,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       </header>
 
       {/* 2. O CAMPO DE FUTEBOL (CAMPOGRAMA VISUAL) */}
-      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-auto">
+      <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-hidden md:overflow-x-auto">
         {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS E ETÁRIAS */}
         <div className="w-full max-w-[1400px] mb-4 flex flex-wrap items-center justify-between gap-3 bg-[#0d1522] border border-slate-800/80 rounded-2xl p-3 px-5 shadow-lg backdrop-blur-sm">
           <div className="flex items-center gap-4 flex-wrap">
@@ -1057,7 +1057,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           </div>
         </div>
 
-        <div ref={pitchRef} className="relative w-full max-w-[1400px] min-h-[1250px] h-[1280px] pt-6 rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
+        <div ref={pitchRef} className="relative w-full max-w-[1400px] h-[520px] sm:h-[620px] md:min-h-[1250px] md:h-[1280px] pt-3 md:pt-6 rounded-2xl md:rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
           {/* Textura sutil de faixas de grama cortada */}
           <div
             className="absolute inset-0 opacity-15 pointer-events-none"
@@ -1068,32 +1068,32 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
           {/* LINHAS DO GRAMADO */}
           {/* Linha Lateral Externa */}
-          <div className="absolute inset-5 border border-emerald-400/25 rounded-xl pointer-events-none" />
+          <div className="absolute inset-3 md:inset-5 border border-emerald-400/25 rounded-lg md:rounded-xl pointer-events-none" />
 
           {/* Linha do Meio de Campo */}
-          <div className="absolute top-1/2 left-5 right-5 h-[1px] bg-emerald-400/25 -translate-y-1/2 pointer-events-none" />
+          <div className="absolute top-1/2 left-3 md:left-5 right-3 md:right-5 h-[1px] bg-emerald-400/25 -translate-y-1/2 pointer-events-none" />
 
           {/* Círculo Central */}
-          <div className="absolute top-1/2 left-1/2 w-48 h-48 border border-emerald-400/25 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none">
-            <div className="absolute top-1/2 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 -translate-y-1/2" />
+          <div className="absolute top-1/2 left-1/2 w-24 h-24 md:w-48 md:h-48 border border-emerald-400/25 rounded-full -translate-x-1/2 -translate-y-1/2 pointer-events-none">
+            <div className="absolute top-1/2 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 -translate-y-1/2" />
           </div>
 
           {/* Grande Área Superior (Ataque) */}
-          <div className="absolute top-5 left-1/2 -translate-x-1/2 w-[440px] h-36 border-b border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute top-3 md:top-5 left-1/2 -translate-x-1/2 w-[220px] md:w-[440px] h-16 md:h-36 border-b border-x border-emerald-400/25 pointer-events-none" />
           {/* Pequena Área Superior */}
-          <div className="absolute top-5 left-1/2 -translate-x-1/2 w-48 h-16 border-b border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute top-3 md:top-5 left-1/2 -translate-x-1/2 w-24 md:w-48 h-8 md:h-16 border-b border-x border-emerald-400/25 pointer-events-none" />
           {/* Marca do Pênalti Superior */}
-          <div className="absolute top-28 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
+          <div className="absolute top-12 md:top-28 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
 
           {/* Grande Área Inferior (Defesa / Gol) */}
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-[440px] h-36 border-t border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-[220px] md:w-[440px] h-16 md:h-36 border-t border-x border-emerald-400/25 pointer-events-none" />
           {/* Pequena Área Inferior */}
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-48 h-16 border-t border-x border-emerald-400/25 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-24 md:w-48 h-8 md:h-16 border-t border-x border-emerald-400/25 pointer-events-none" />
           {/* Marca do Pênalti Inferior */}
-          <div className="absolute bottom-28 left-1/2 w-2 h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
+          <div className="absolute bottom-12 md:bottom-28 left-1/2 w-1.5 md:w-2 h-1.5 md:h-2 bg-emerald-400/30 rounded-full -translate-x-1/2 pointer-events-none" />
 
           {/* Trave do Gol Inferior */}
-          <div className="absolute bottom-5 left-1/2 -translate-x-1/2 w-24 h-2 border-t-2 border-x-2 border-white/40 pointer-events-none" />
+          <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-14 md:w-24 h-1 md:h-2 border-t-2 border-x-2 border-white/40 pointer-events-none" />
 
           {/* 3. DISPOSIÇÃO DAS 11 POSIÇÕES CONFORME A FORMAÇÃO SELECIONADA */}
           {activeFormation.positions.map((pos) => {
@@ -1112,12 +1112,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 }`}
                 style={{ top: posCoords.top, left: posCoords.left }}
               >
-                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO */}
+                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) */}
                 <div
                   onDragOver={(e) => handleDragOver(e, pos.id)}
                   onDragLeave={(e) => handleDragLeave(e, pos.id)}
                   onDrop={(e) => handleDropOnSlot(e, pos.id, null)}
-                  className={`w-[220px] min-w-[220px] max-w-[230px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
+                  className={`hidden md:block w-[220px] min-w-[220px] max-w-[230px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
                     isBeingMoved
                       ? 'border-2 border-emerald-400 shadow-emerald-500/30 scale-105 ring-2 ring-emerald-500/20'
                       : dragOverTarget === pos.id
@@ -1356,6 +1356,57 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                     )}
                   </div>
                 </div>
+
+                {/* NÓ TÁTICO COMPACTO MOBILE TOUCH (< 768px) */}
+                <div
+                  className="md:hidden flex flex-col items-center justify-center cursor-pointer active:scale-95 transition-transform"
+                  style={{ minWidth: '56px', minHeight: '56px' }}
+                  onClick={() => {
+                    setAssigningPos(pos)
+                    setPlayerSearch('')
+                  }}
+                  title={pos.label}
+                >
+                  {titular ? (
+                    (() => {
+                      const fullTitular = players.find(p => p.id === titular.id) || titular
+                      const birthYearFormatted = formatAthleteBirthYear(fullTitular)
+                      return (
+                        <>
+                          <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 border-2 border-emerald-300 shadow-lg shadow-black/80 flex items-center justify-center">
+                            <span className="text-[10px] font-black text-slate-950 uppercase">{pos.label}</span>
+                            {fullTitular.nivel && (
+                              <span className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded-full border border-black shadow ${getNivelStyle(fullTitular.nivel)}`}>
+                                {fullTitular.nivel}
+                              </span>
+                            )}
+                            {alternates.length > 0 && (
+                              <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-slate-950 text-emerald-400 border border-emerald-500/50 text-[8px] font-black px-1 rounded shadow">
+                                +{alternates.length}
+                              </span>
+                            )}
+                          </div>
+                          <span className="mt-1 text-[10px] font-bold text-white max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                            {fullTitular.nome}
+                          </span>
+                          <span className="text-[8px] font-semibold text-emerald-300/90 max-w-[65px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                            {fullTitular.clubeAtual || fullTitular.clube || birthYearFormatted || ''}
+                          </span>
+                        </>
+                      )
+                    })()
+                  ) : (
+                    <>
+                      <div className="w-10 h-10 rounded-full border-2 border-dashed border-emerald-400/60 bg-slate-950/70 shadow-md flex flex-col items-center justify-center text-emerald-400">
+                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
+                        <span className="text-[8px] font-black uppercase text-emerald-400/90">{pos.label}</span>
+                      </div>
+                      <span className="mt-0.5 text-[9px] font-semibold text-emerald-400/70 max-w-[70px] truncate text-center">
+                        Vago
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
             )
           })}
@@ -1364,8 +1415,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
       {/* 4. MODAL DE SELEÇÃO DO BANCO */}
       {assigningPos && (
-        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-[#0b111c] border border-slate-800 rounded-2xl w-full max-w-lg overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-xs flex items-center justify-center p-2 sm:p-4">
+          <div className="bg-[#0b111c] border border-slate-800 rounded-2xl w-full max-w-lg max-h-[90vh] flex flex-col overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             {/* Header Modal */}
             <div className="px-5 py-4 border-b border-slate-800 flex items-center justify-between bg-[#080d16]">
               <div className="flex items-center gap-2">

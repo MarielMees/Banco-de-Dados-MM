@@ -918,10 +918,10 @@ export default function MatchCalendarV2({
           </div>
 
           {/* BADGES DE COMPETIÇÕES MONITORADAS */}
-          <div className="mt-5 pt-4 border-t border-slate-800/80 grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
+          <div className="mt-5 pt-4 border-t border-slate-800/80 flex overflow-x-auto no-scrollbar pb-2 sm:pb-0 sm:grid sm:grid-cols-4 lg:grid-cols-8 gap-2 text-xs">
             <button
               onClick={() => setSelectedLeagueId('todas')}
-              className={`p-2.5 rounded-xl border flex flex-col justify-between gap-1 transition cursor-pointer text-left ${
+              className={`p-2.5 rounded-xl border flex flex-col justify-between gap-1 transition cursor-pointer text-left shrink-0 min-w-[110px] sm:min-w-0 ${
                 selectedLeagueId === 'todas'
                   ? 'bg-emerald-500/15 border-emerald-500/50 shadow-xs'
                   : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
@@ -943,7 +943,7 @@ export default function MatchCalendarV2({
                   role="button"
                   tabIndex={0}
                   onKeyDown={(e) => { if (e.key === 'Enter') setSelectedLeagueId(lg.id); }}
-                  className={`p-2.5 rounded-xl border flex flex-col justify-between gap-1 transition cursor-pointer text-left ${
+                  className={`p-2.5 rounded-xl border flex flex-col justify-between gap-1 transition cursor-pointer text-left shrink-0 min-w-[110px] sm:min-w-0 ${
                     isSel
                       ? 'bg-blue-500/15 border-blue-500/50 shadow-xs'
                       : 'bg-slate-950/60 border-slate-800 hover:border-slate-700'
@@ -1175,10 +1175,10 @@ export default function MatchCalendarV2({
                     </div>
 
                     {/* Ações do Card: Relatório Ao Vivo (Express) + Arquivar */}
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2">
+                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full">
                       <button
                         onClick={() => handleOpenQuickReport(match)}
-                        className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600/30 hover:to-indigo-600/30 text-blue-300 hover:text-blue-200 border border-blue-500/30 hover:border-blue-500/50 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
+                        className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-blue-600/20 to-indigo-600/20 hover:from-blue-600/30 hover:to-indigo-600/30 text-blue-300 hover:text-blue-200 border border-blue-500/30 hover:border-blue-500/50 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer shadow-xs active:scale-95"
                       >
                         <Smartphone className="w-3.5 h-3.5 text-blue-400" />
                         <span>📱 Acompanhar / Ao Vivo</span>
@@ -1186,7 +1186,7 @@ export default function MatchCalendarV2({
 
                       <button
                         onClick={() => handleArchiveMatch(match)}
-                        className="py-2 px-2.5 rounded-xl text-xs text-slate-400 hover:text-slate-200 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 transition flex items-center gap-1.5 cursor-pointer shrink-0 active:scale-95"
+                        className="w-full sm:w-auto py-2 px-2.5 rounded-xl text-xs text-slate-400 hover:text-slate-200 bg-slate-800/80 hover:bg-slate-800 border border-slate-700 transition flex items-center justify-center gap-1.5 cursor-pointer shrink-0 active:scale-95"
                         title="Mover para Jogos Encerrados e Abrir Relatório Completo Pós-Jogo"
                       >
                         <Archive className="w-3.5 h-3.5 text-slate-400" />
@@ -1312,19 +1312,19 @@ export default function MatchCalendarV2({
                     </div>
 
                     {/* Ações do Card de Jogo Encerrado */}
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center gap-2">
+                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full">
                       {isReportDone ? (
                         <>
                           <button
                             onClick={() => setViewPdfReport(report || match?.scoutReport)}
-                            className="flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                            className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 hover:text-white border border-slate-700 text-xs font-bold transition flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
                           >
                             <Eye className="w-3.5 h-3.5 text-emerald-400" />
                             <span>👁️ Ver / PDF</span>
                           </button>
                           <button
                             onClick={() => handleOpenEditReport(match, report || match?.scoutReport)}
-                            className="py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer active:scale-95"
+                            className="w-full sm:w-auto py-2 px-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-amber-400 hover:text-amber-300 border border-slate-700 text-xs font-bold transition flex items-center justify-center gap-1 cursor-pointer active:scale-95"
                             title="Editar Relatório"
                           >
                             <Pencil className="w-3.5 h-3.5" />
@@ -1336,7 +1336,7 @@ export default function MatchCalendarV2({
                           <button
                             onClick={() => handleOpenCreateReport(match)}
                             disabled={loadingLineupMatchId === match?.id}
-                            className="flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/30 cursor-pointer active:scale-95"
+                            className="w-full sm:flex-1 py-2 px-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 disabled:opacity-60 text-white rounded-xl text-xs font-bold transition flex items-center justify-center gap-1.5 shadow-md shadow-emerald-950/30 cursor-pointer active:scale-95"
                           >
                             {loadingLineupMatchId === match?.id ? (
                               <>
@@ -1353,7 +1353,7 @@ export default function MatchCalendarV2({
                           {match?.isArchived && (
                             <button
                               onClick={() => handleUnarchiveMatch(match)}
-                              className="p-2 rounded-xl text-slate-400 hover:text-slate-200 bg-slate-800 border border-slate-700 transition cursor-pointer"
+                              className="w-full sm:w-auto p-2 rounded-xl text-slate-400 hover:text-slate-200 bg-slate-800 border border-slate-700 transition cursor-pointer flex items-center justify-center"
                               title="Retornar para Próximos"
                             >
                               <RotateCcw className="w-3.5 h-3.5" />
