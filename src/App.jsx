@@ -21,6 +21,7 @@ import {
   deleteMatchReportFromSupabase
 } from './services/supabaseService'
 import { supabase } from './services/supabaseClient'
+import { CURATED_GOALKEEPERS } from './data/curatedGoalkeepers'
 import Login from './components/Login'
 import UserBadge from './components/UserBadge'
 import Sidebar from './components/Sidebar'
@@ -35,13 +36,13 @@ function App() {
       const saved = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
       if (saved) {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed)) {
+        if (Array.isArray(parsed) && parsed.length > 0) {
           return parsed
         }
       }
-      return []
+      return CURATED_GOALKEEPERS
     } catch (e) {
-      return []
+      return CURATED_GOALKEEPERS
     }
   })
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
@@ -124,18 +125,25 @@ function App() {
             } catch (_) {}
 
             const mergedPlayers = remotePlayers.map(rp => {
-              const local = Array.isArray(cached) ? cached.find(lp => String(lp.id) === String(rp.id)) : null
-              if (local) {
+              const local = Array.isArray(cached) ? cached.find(lp => String(lp.id) === String(rp.id) || (lp.nome && rp.nome && lp.nome.toLowerCase().trim() === rp.nome.toLowerCase().trim())) : null
+              const curated = CURATED_GOALKEEPERS.find(cg => String(cg.id) === String(rp.id) || (cg.nome && rp.nome && cg.nome.toLowerCase().trim() === rp.nome.toLowerCase().trim()))
+              const source = local || curated
+              if (source) {
                 return {
-                  ...local,
+                  ...source,
                   ...rp,
-                  alt: local.alt || rp.alt || null,
-                  an: local.an || rp.an || null,
-                  contrato: local.contrato || rp.contrato || '',
-                  agente: local.agente || rp.agente || '',
-                  caracteristicas: (local.caracteristicas && local.caracteristicas.length > 0) ? local.caracteristicas : rp.caracteristicas,
-                  projecao: (local.projecao && local.projecao.length > 0) ? local.projecao : rp.projecao,
-                  nivelFisico: local.nivelFisico || rp.nivelFisico || '',
+                  alt: rp.alt || source.alt || source.altura || null,
+                  altura: rp.altura || source.altura || source.alt || null,
+                  an: rp.an || source.an || source.anoNascimento || null,
+                  anoNascimento: rp.anoNascimento || source.anoNascimento || source.an || null,
+                  contrato: rp.contrato || source.contrato || '',
+                  agente: rp.agente || source.agente || '',
+                  caracteristicas: (rp.caracteristicas && rp.caracteristicas.length > 0) ? rp.caracteristicas : (source.caracteristicas || []),
+                  projecao: (rp.projecao && rp.projecao.length > 0) ? rp.projecao : (source.projecao || []),
+                  clubeFormador: rp.clubeFormador || source.clubeFormador || rp.origem || source.origem || '',
+                  situacao: rp.situacao || source.situacao || 'OK',
+                  alerta: rp.alerta || source.alerta || 'OK',
+                  nivelFisico: rp.nivelFisico || source.nivelFisico || '',
                   isProvisorio: Boolean(rp.isProvisorio),
                   is_provisorio: Boolean(rp.isProvisorio)
                 }

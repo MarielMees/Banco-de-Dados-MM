@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient.js';
+import { CURATED_GOALKEEPERS } from '../data/curatedGoalkeepers.js';
 
 /**
  * Mapeamento Atleta (App) -> Linha da Tabela 'players' (Supabase)
@@ -26,7 +27,7 @@ export function mapPlayerToSupabaseRow(p) {
     pe_preferencial: p.pePreferencial || p.pe || null,
     idade: numIdade,
     nacionalidade: p.nacionalidade || 'Brasileiro',
-    origem: p.origem || 'Base',
+    origem: p.clubeOrigem || p.clubeFormador || p.origem || 'Base',
     is_provisorio: Boolean(p.isProvisorio || p.is_provisorio),
     nivel: p.nivel || 'B'
   };
@@ -96,29 +97,42 @@ export function mapSupabaseRowToPlayer(row) {
     }
   }
 
+  // Consulta catálogo curado para completar características e detalhes estendidos
+  const curatedMatch = CURATED_GOALKEEPERS.find(g => 
+    String(g.id) === String(row.id) || 
+    (g.nome && row.nome && g.nome.toLowerCase().trim() === row.nome.toLowerCase().trim())
+  );
+
   return {
     id: row.id,
-    nome: row.nome || 'Atleta Observado',
-    clubeAtual: row.clube_atual || '',
-    ca: row.clube_atual || '',
-    clube: row.clube_atual || '',
+    nome: row.nome || (curatedMatch ? curatedMatch.nome : 'Atleta Observado'),
+    clubeAtual: row.clube_atual || (curatedMatch ? curatedMatch.clubeAtual : ''),
+    ca: row.clube_atual || (curatedMatch ? curatedMatch.ca : ''),
+    clube: row.clube_atual || (curatedMatch ? curatedMatch.clube : ''),
     posicao: posId,
-    posicaoOriginal: row.posicao || '',
+    posicaoOriginal: row.posicao || (curatedMatch ? curatedMatch.posicaoOriginal : ''),
     posicaoLabel: formatPosLabel(row.posicao || posId),
-    pePreferencial: pe,
-    pe: pe,
-    idade: row.idade || '',
-    an: anVal,
-    anoNascimento: anVal,
-    alt: null,
-    nacionalidade: row.nacionalidade || 'Brasileiro',
-    origem: row.origem || (isProv ? 'Destaque de Relatório' : 'Base'),
+    pePreferencial: pe || (curatedMatch ? curatedMatch.pePreferencial : 'Destro'),
+    pe: pe || (curatedMatch ? curatedMatch.pe : 'Destro'),
+    idade: row.idade || (curatedMatch ? curatedMatch.idade : ''),
+    an: anVal || (curatedMatch ? curatedMatch.an : null),
+    anoNascimento: anVal || (curatedMatch ? curatedMatch.anoNascimento : null),
+    alt: curatedMatch ? curatedMatch.alt : null,
+    altura: curatedMatch ? curatedMatch.altura : null,
+    nacionalidade: row.nacionalidade || (curatedMatch ? curatedMatch.nacionalidade : 'Brasileiro'),
+    clubeFormador: row.origem || (curatedMatch ? curatedMatch.clubeFormador : ''),
+    origem: row.origem || (curatedMatch ? curatedMatch.origem : (isProv ? 'Destaque de Relatório' : 'Base')),
     isProvisorio: isProv,
     is_provisorio: isProv,
-    nivel: row.nivel || (isProv ? '' : 'B'),
-    projecao: [],
-    caracteristicas: isProv ? ['Destaque de Campo'] : [],
-    alerta: 'OK',
+    nivel: row.nivel || (curatedMatch ? curatedMatch.nivel : (isProv ? '' : 'B')),
+    projecao: curatedMatch ? curatedMatch.projecao : [],
+    caracteristicas: (curatedMatch && curatedMatch.caracteristicas && curatedMatch.caracteristicas.length > 0)
+      ? curatedMatch.caracteristicas
+      : (isProv ? ['Destaque de Campo'] : []),
+    agente: curatedMatch ? curatedMatch.agente : '',
+    contrato: curatedMatch ? curatedMatch.contrato : '',
+    situacao: curatedMatch ? curatedMatch.situacao : 'OK',
+    alerta: curatedMatch ? curatedMatch.alerta : 'OK',
     created_at: row.created_at
   };
 }
