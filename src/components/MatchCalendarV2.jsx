@@ -53,8 +53,12 @@ import {
   syncVaultToSupabase,
   fetchMatchReportsFromSupabase,
   upsertMatchReportToSupabase,
-  buildMatchFromReport
+  buildMatchFromReport,
+  fetchFixturesVaultFromSupabase,
+  upsertRawFixturesToVault,
+  mapVaultRowToMatch
 } from '../services/supabaseService';
+import { supabase } from '../services/supabaseClient';
 import ErrorBoundary from './ErrorBoundary';
 import PostMatchReportModal from './PostMatchReportModal';
 import QuickMatchReportModal from './QuickMatchReportModal';
@@ -378,7 +382,7 @@ export default function MatchCalendarV2({
     setTimeout(() => setToastMessage(null), 4000);
   };
 
-  // Sincronização centralizada com o Supabase e Migração Automática Silenciosa
+  // Sincronização centralizada com o Supabase ('fixtures_vault') e fallback local
   useEffect(() => {
     let isMounted = true;
 
@@ -390,28 +394,30 @@ export default function MatchCalendarV2({
       if (localMatches.length > 0) setMatches(localMatches);
       if (localReports.length > 0) setReports(localReports);
 
-      // 2. Migração Silenciosa Automática: Se houver dados em localStorage, faz upload silencioso para o Supabase
+      // 2. Consulta em tempo real da tabela 'fixtures_vault' e relatórios no Supabase
       try {
-        if (localReports.length > 0) {
-          localReports.forEach(rep => {
-            upsertMatchReportToSupabase(rep).catch(() => {});
-          });
-        }
-        if (localMatches.length > 0) {
-          syncVaultToSupabase(localMatches).catch(() => {});
-        }
-      } catch (_) {}
-
-      // 3. Consulta em tempo real das tabelas centrais do Supabase (Nuvem é a autoridade máxima)
-      try {
-        const [remoteReports, remoteMatches] = await Promise.all([
-          fetchMatchReportsFromSupabase(),
-          fetchMatchesFromSupabase()
+        const [vaultRes, remoteReports] = await Promise.all([
+          supabase
+            .from('fixtures_vault')
+            .select('*')
+            .order('fixture_date', { ascending: true }),
+          fetchMatchReportsFromSupabase()
         ]);
 
         if (!isMounted) return;
 
-        // a) Consolidação de Relatórios: Nuvem + Local
+        // a) Consolidação de Partidas: Nuvem ('fixtures_vault') prioritária com fallback no cofre local
+        let activeMatches = [];
+        if (!vaultRes.error && Array.isArray(vaultRes.data) && vaultRes.data.length > 0) {
+          activeMatches = vaultRes.data.map(mapVaultRowToMatch).filter(Boolean);
+        } else {
+          if (vaultRes.error) {
+            console.warn('[MatchCalendarV2] Consulta fixtures_vault indisponível (usando cofre local):', vaultRes.error.message);
+          }
+          activeMatches = localMatches;
+        }
+
+        // b) Consolidação de Relatórios
         let activeReports = [...localReports];
         if (Array.isArray(remoteReports) && remoteReports.length > 0) {
           const reportMap = new Map();
@@ -433,14 +439,7 @@ export default function MatchCalendarV2({
           } catch (_) {}
         }
 
-        // b) Consolidação de Partidas: Nuvem + Local
-        let activeMatches = [...localMatches];
-        if (Array.isArray(remoteMatches) && remoteMatches.length > 0) {
-          mergeMatchesIntoVault(remoteMatches);
-          activeMatches = getStoredMatchesV2();
-        }
-
-        // c) Garante que cada relatório (como o do Goiás x Avaí) tenha sua partida correspondente no cofre com status CONCLUIDO
+        // c) Vincula relatórios às partidas correspondentes no cofre
         const matchMap = new Map();
         activeMatches.forEach(m => {
           if (m?.id) matchMap.set(String(m.id), m);
@@ -473,17 +472,14 @@ export default function MatchCalendarV2({
         const finalMatches = Array.from(matchMap.values());
         setMatches(finalMatches);
         saveStoredMatchesV2(finalMatches);
-
-        // Se o Supabase ainda não tiver as partidas gravadas na tabela, envia silenciosamente
-        syncVaultToSupabase(finalMatches).catch(() => {});
       } catch (err) {
-        console.warn('[MatchCalendarV2] Erro na sincronização com Supabase:', err);
+        console.warn('[MatchCalendarV2] Erro na sincronização com Supabase (mantendo cofre local):', err);
       }
     }
 
     syncCloudAndMigrate();
 
-    // 4. Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
+    // 3. Dispara a sincronização dinâmica por janela móvel (-3 a +7 dias)
     handleSyncAll();
 
     return () => {
@@ -504,9 +500,23 @@ export default function MatchCalendarV2({
       });
 
       if (res.success) {
-        const updated = getStoredMatchesV2();
-        setMatches(updated);
-        syncVaultToSupabase(updated).catch(() => {});
+        try {
+          const { data: vaultData, error: vaultErr } = await supabase
+            .from('fixtures_vault')
+            .select('*')
+            .order('fixture_date', { ascending: true });
+          if (!vaultErr && Array.isArray(vaultData) && vaultData.length > 0) {
+            const mapped = vaultData.map(mapVaultRowToMatch).filter(Boolean);
+            setMatches(mapped);
+            saveStoredMatchesV2(mapped);
+          } else {
+            const updated = getStoredMatchesV2();
+            setMatches(updated);
+          }
+        } catch (_) {
+          const updated = getStoredMatchesV2();
+          setMatches(updated);
+        }
         showToast(`Sincronização concluída: ${res.updatedCount || 0} jogos atualizados, ${res.newCount || 0} novas partidas encontradas.`);
       } else {
         setApiError(res.error || 'Nenhum jogo presente ou futuro encontrado para esta liga.');
@@ -527,11 +537,25 @@ export default function MatchCalendarV2({
 
     try {
       const res = await syncAllMonitoredLeagues((msg) => setSyncProgress(msg));
-      const updated = getStoredMatchesV2();
-      setMatches(updated);
-      syncVaultToSupabase(updated).catch(() => {});
 
       if (res.success) {
+        try {
+          const { data: vaultData, error: vaultErr } = await supabase
+            .from('fixtures_vault')
+            .select('*')
+            .order('fixture_date', { ascending: true });
+          if (!vaultErr && Array.isArray(vaultData) && vaultData.length > 0) {
+            const mapped = vaultData.map(mapVaultRowToMatch).filter(Boolean);
+            setMatches(mapped);
+            saveStoredMatchesV2(mapped);
+          } else {
+            const updated = getStoredMatchesV2();
+            setMatches(updated);
+          }
+        } catch (_) {
+          const updated = getStoredMatchesV2();
+          setMatches(updated);
+        }
         showToast(`Sincronização concluída: ${res.updatedCount || 0} jogos atualizados, ${res.newCount || 0} novas partidas encontradas.`);
       }
     } catch (err) {
@@ -849,8 +873,9 @@ export default function MatchCalendarV2({
                 <span className="px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-mono font-bold tracking-wider">
                   API-FOOTBALL v3
                 </span>
-                <span className="text-xs text-slate-400 font-medium">
-                  {matches.length} partidas no cofre
+                <span className="text-xs text-slate-400 font-medium flex items-center gap-1.5">
+                  <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+                  {matches.length} partidas na nuvem
                 </span>
               </div>
               <h2 className="text-2xl font-black text-white tracking-tight flex items-center gap-2.5">

@@ -556,4 +556,156 @@ export function buildMatchFromReport(report) {
   };
 }
 
+const VAULT_LIVE_STATUS_CODES = ['1H', 'HT', '2H', 'ET', 'P', 'LIVE', 'BT', 'INT'];
+const VAULT_FINISHED_STATUS_CODES = ['FT', 'AET', 'PEN', 'PST', 'CANC', 'ABD', 'AWD', 'WO'];
+
+/**
+ * Converte linha de 'fixtures_vault' em objeto de partida da Agenda
+ */
+export function mapVaultRowToMatch(row) {
+  if (!row) return null;
+  const raw = row.raw_data || {};
+  const fix = raw.fixture || {};
+  const teams = raw.teams || {};
+  const goals = raw.goals || {};
+  const score = raw.score || {};
+
+  const homeName = row.home_team || teams.home?.name || 'Mandante';
+  const awayName = row.away_team || teams.away?.name || 'Visitante';
+  const statusShort = row.status || fix.status?.short || 'NS';
+  const statusLong = fix.status?.long || (statusShort === 'FT' ? 'Match Finished' : 'Not Started');
+
+  const isLive = VAULT_LIVE_STATUS_CODES.includes(statusShort);
+  const isFinished = VAULT_FINISHED_STATUS_CODES.includes(statusShort);
+  const isUpcoming = !isLive && !isFinished;
+
+  const dateObj = new Date(row.fixture_date || fix.date);
+  const dateStr = !isNaN(dateObj.getTime()) ? dateObj.toISOString().split('T')[0] : '';
+  const timeStr = !isNaN(dateObj.getTime())
+    ? dateObj.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', hour12: false })
+    : '—';
+
+  return {
+    id: String(row.id),
+    fixtureId: String(row.id),
+    date: dateStr,
+    datetime: row.fixture_date || fix.date || '',
+    time: timeStr,
+    timestamp: fix.timestamp,
+    status: statusShort,
+    statusShort,
+    statusLong,
+    elapsed: fix.status?.elapsed || 0,
+    venue: row.venue || fix.venue?.name || 'Estádio a definir',
+    city: fix.venue?.city || '',
+    leagueId: row.league_id || raw.league?.id,
+    leagueName: row.league_name || raw.league?.name || 'Competição Oficial',
+    season: raw.league?.season || new Date().getFullYear(),
+    round: row.league_round || raw.league?.round || 'Rodada Oficial',
+    homeTeam: homeName,
+    awayTeam: awayName,
+    homeId: teams.home?.id,
+    awayId: teams.away?.id,
+    homeLogo: row.home_logo || teams.home?.logo || '',
+    awayLogo: row.away_logo || teams.away?.logo || '',
+    homeScore: row.goals_home ?? goals.home ?? null,
+    awayScore: row.goals_away ?? goals.away ?? null,
+    scoreFulltime: score.fulltime,
+    isLive,
+    isFinished,
+    isUpcoming,
+    hasReport: false,
+    reportStatus: 'PENDENTE',
+    mandante: { nome: homeName, id: teams.home?.id, logo: row.home_logo || teams.home?.logo },
+    visitante: { nome: awayName, id: teams.away?.id, logo: row.away_logo || teams.away?.logo },
+    placar: { mandante: row.goals_home ?? goals.home ?? 0, visitante: row.goals_away ?? goals.away ?? 0 },
+    raw: raw,
+    raw_data: raw,
+    updated_at: row.updated_at
+  };
+}
+
+/**
+ * Busca partidas diretamente de 'fixtures_vault' no Supabase
+ */
+export async function fetchFixturesVaultFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('fixtures_vault')
+      .select('*')
+      .order('fixture_date', { ascending: true });
+
+    if (error) {
+      console.warn('[Supabase] Erro ao carregar fixtures_vault (utilizando fallback local):', error.message);
+      return null;
+    }
+    if (Array.isArray(data)) {
+      return data.map(mapVaultRowToMatch).filter(Boolean);
+    }
+    return [];
+  } catch (err) {
+    console.warn('[Supabase] Falha ao consultar fixtures_vault:', err.message);
+    return null;
+  }
+}
+
+/**
+ * Upsert direto de itens da API-Football em 'fixtures_vault'
+ */
+export async function upsertRawFixturesToVault(items) {
+  if (!Array.isArray(items) || items.length === 0) return { success: true, count: 0 };
+
+  const rows = items.map(item => {
+    if (!item) return null;
+    const fixture = item.fixture || {};
+    const league = item.league || {};
+    const teams = item.teams || {};
+    const goals = item.goals || {};
+
+    if (!fixture.id) return null;
+
+    return {
+      id: fixture.id,
+      league_id: league.id || null,
+      league_name: league.name || '',
+      league_round: league.round || '',
+      fixture_date: fixture.date || null,
+      home_team: teams.home?.name || 'Mandante',
+      away_team: teams.away?.name || 'Visitante',
+      home_logo: teams.home?.logo || '',
+      away_logo: teams.away?.logo || '',
+      venue: fixture.venue?.name || '',
+      status: fixture.status?.short || 'NS',
+      goals_home: goals.home ?? null,
+      goals_away: goals.away ?? null,
+      raw_data: item,
+      updated_at: new Date().toISOString()
+    };
+  }).filter(Boolean);
+
+  if (rows.length === 0) return { success: true, count: 0 };
+
+  try {
+    const CHUNK_SIZE = 50;
+    let synced = 0;
+    for (let i = 0; i < rows.length; i += CHUNK_SIZE) {
+      const chunk = rows.slice(i, i + CHUNK_SIZE);
+      const { error } = await supabase
+        .from('fixtures_vault')
+        .upsert(chunk, { onConflict: 'id' });
+
+      if (error) {
+        console.warn('[Supabase] Erro no upsert de fixtures_vault:', error.message);
+        return { success: false, error: error.message };
+      }
+      synced += chunk.length;
+    }
+    return { success: true, count: synced };
+  } catch (err) {
+    console.warn('[Supabase] Falha ao conectar em fixtures_vault:', err.message);
+    return { success: false, error: err.message };
+  }
+}
+
+
 

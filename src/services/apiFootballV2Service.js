@@ -10,6 +10,8 @@
  * 4. Consumo sob demanda para escalações e notas de jogadores.
  */
 
+import { upsertRawFixturesToVault } from './supabaseService';
+
 const API_BASE_URL = 'https://v3.football.api-sports.io';
 
 export const API_FOOTBALL_LEAGUES = [
@@ -402,6 +404,11 @@ export async function syncLeagueFixtures({ leagueId, onProgress }) {
   const normalizedNew = rawResults.map(normalizeFixture).filter(Boolean);
   const mergeResult = mergeMatchesIntoVault(normalizedNew);
 
+  // Upsert direto na tabela 'fixtures_vault' no Supabase
+  try {
+    upsertRawFixturesToVault(rawResults).catch(() => {});
+  } catch (_) {}
+
   return {
     success: true,
     updatedCount: mergeResult.updatedCount,
@@ -472,6 +479,11 @@ export async function syncAllMonitoredLeagues(onProgress) {
 
   const normalized = rawResults.map(normalizeFixture).filter(Boolean);
   const mergeResult = mergeMatchesIntoVault(normalized);
+
+  // Upsert direto na tabela 'fixtures_vault' no Supabase
+  try {
+    upsertRawFixturesToVault(rawResults).catch(() => {});
+  } catch (_) {}
 
   return {
     success: true,
