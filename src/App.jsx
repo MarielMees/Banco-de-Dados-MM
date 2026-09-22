@@ -10,7 +10,6 @@ import TournamentBestXI from './components/TournamentBestXI'
 import CopaSPList from './components/CopaSPList'
 import MatchCalendarV2 from './components/MatchCalendarV2'
 import ErrorBoundary from './components/ErrorBoundary'
-import { MOCK_PLAYERS } from './data/mockPlayers'
 import { MOCK_COACHES } from './data/mockCoaches'
 import { MOCK_MATCH_REPORTS } from './data/mockMatchReports'
 import {
@@ -27,74 +26,7 @@ import UserBadge from './components/UserBadge'
 import Sidebar from './components/Sidebar'
 import { Loader2, Zap, Menu } from 'lucide-react'
 
-const INITIAL_RECENT_ADDITIONS = [
-  {
-    id: 901,
-    nome: 'Mikael',
-    posicao: 'lat-direito',
-    posicaoLabel: 'Lateral Direito',
-    nivel: 'C',
-    monitoramento: true,
-    ca: 'Operario',
-    autor: 'dudu@admin.com',
-    dataHora: 'hoje às 12:52'
-  },
-  {
-    id: 902,
-    nome: 'Danielzinho',
-    posicao: 'extremo',
-    posicaoLabel: 'Extremo',
-    nivel: 'C',
-    monitoramento: false,
-    ca: 'Nautico',
-    autor: 'dudu@admin.com',
-    dataHora: 'hoje às 12:51'
-  },
-  {
-    id: 903,
-    nome: 'Gabriel Delfim',
-    posicao: 'goleiro',
-    posicaoLabel: 'Goleiro',
-    nivel: 'B',
-    monitoramento: false,
-    ca: 'America-MG',
-    autor: 'dudu@admin.com',
-    dataHora: 'ontem às 11:22'
-  },
-  {
-    id: 904,
-    nome: 'Adrianinho',
-    posicao: 'medio',
-    posicaoLabel: 'Médio',
-    nivel: 'B',
-    monitoramento: false,
-    ca: 'Ponte Preta',
-    autor: 'dudu@admin.com',
-    dataHora: '09/09 às 16:15'
-  },
-  {
-    id: 905,
-    nome: 'Biel Fonseca',
-    posicao: 'meia-ofensivo',
-    posicaoLabel: 'Meia Ofensivo',
-    nivel: 'A',
-    monitoramento: false,
-    ca: 'Juventude',
-    autor: 'dudu@admin.com',
-    dataHora: '09/09 às 10:04'
-  },
-  {
-    id: 906,
-    nome: 'Fellipe Resende',
-    posicao: 'extremo',
-    posicaoLabel: 'Extremo',
-    nivel: 'B',
-    monitoramento: false,
-    ca: 'Brusque (Sport)',
-    autor: 'dudu@admin.com',
-    dataHora: '08/09 às 08:42'
-  }
-]
+const INITIAL_RECENT_ADDITIONS = []
 
 function App() {
   const [currentTab, setCurrentTab] = useState('visao-geral')
@@ -103,15 +35,13 @@ function App() {
       const saved = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
       if (saved) {
         const parsed = JSON.parse(saved)
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          const existingIds = new Set(parsed.map(p => p.id))
-          const missingMocks = MOCK_PLAYERS.filter(mp => !existingIds.has(mp.id))
-          return [...parsed, ...missingMocks]
+        if (Array.isArray(parsed)) {
+          return parsed
         }
       }
-      return MOCK_PLAYERS
+      return []
     } catch (e) {
-      return MOCK_PLAYERS
+      return []
     }
   })
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
@@ -213,23 +143,17 @@ function App() {
               return rp
             })
 
-            const remoteIds = new Set(remotePlayers.map(rp => String(rp.id)))
-            const localOnly = Array.isArray(cached) ? cached.filter(lp => lp && lp.id && !remoteIds.has(String(lp.id))) : []
-            const combined = [...mergedPlayers, ...localOnly]
-
-            setPlayers(combined)
+            setPlayers(mergedPlayers)
             try {
-              localStorage.setItem('scout_players', JSON.stringify(combined))
-              localStorage.setItem('radar_players', JSON.stringify(combined))
+              localStorage.setItem('scout_players', JSON.stringify(mergedPlayers))
+              localStorage.setItem('radar_players', JSON.stringify(mergedPlayers))
             } catch (_) {}
           } else {
-            // Se a tabela no Supabase estiver vazia pela primeira vez, faz backup dos jogadores locais para a nuvem
+            // Se a tabela 'players' no Supabase estiver vazia, o estado inicial da aplicação deve ser exatamente um array vazio: '[]'
+            setPlayers([])
             try {
-              const saved = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
-              const initialToUpload = saved ? JSON.parse(saved) : MOCK_PLAYERS
-              if (Array.isArray(initialToUpload)) {
-                initialToUpload.slice(0, 30).forEach(p => upsertPlayerToSupabase(p))
-              }
+              localStorage.setItem('scout_players', JSON.stringify([]))
+              localStorage.setItem('radar_players', JSON.stringify([]))
             } catch (_) {}
           }
         }
@@ -345,7 +269,7 @@ function App() {
           if (saved) currentList = JSON.parse(saved)
         } catch (e) {}
       }
-      if (currentList.length === 0) currentList = [...MOCK_PLAYERS]
+      if (currentList.length === 0) currentList = []
 
       const updatedPlayers = [...currentList]
       const addedIds = new Set(updatedPlayers.map(p => String(p.id)))
