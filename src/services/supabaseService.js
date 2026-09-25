@@ -29,7 +29,12 @@ export function mapPlayerToSupabaseRow(p) {
     nacionalidade: p.nacionalidade || 'Brasileiro',
     origem: p.clubeOrigem || p.clubeFormador || p.origem || 'Base',
     is_provisorio: Boolean(p.isProvisorio || p.is_provisorio),
-    nivel: p.nivel || 'B'
+    nivel: p.nivel || 'B',
+    estimated_salary: (p.estimated_salary !== undefined && p.estimated_salary !== null && p.estimated_salary !== '')
+      ? Number(String(p.estimated_salary).replace(/[^\d.-]/g, ''))
+      : ((p.salarioEstimado !== undefined && p.salarioEstimado !== null && p.salarioEstimado !== '')
+          ? Number(String(p.salarioEstimado).replace(/[^\d.-]/g, ''))
+          : null)
   };
 }
 
@@ -133,6 +138,8 @@ export function mapSupabaseRowToPlayer(row) {
     contrato: curatedMatch ? curatedMatch.contrato : '',
     situacao: curatedMatch ? curatedMatch.situacao : 'OK',
     alerta: curatedMatch ? curatedMatch.alerta : 'OK',
+    estimated_salary: row.estimated_salary !== undefined && row.estimated_salary !== null ? Number(row.estimated_salary) : null,
+    salarioEstimado: row.estimated_salary !== undefined && row.estimated_salary !== null ? Number(row.estimated_salary) : null,
     created_at: row.created_at
   };
 }
@@ -169,10 +176,24 @@ export async function upsertPlayerToSupabase(player) {
     const row = mapPlayerToSupabaseRow(player);
     if (!row) return { success: false, error: 'Dados inválidos' };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('players')
       .upsert(row, { onConflict: 'id' })
       .select();
+
+    // Se falhar porque a coluna 'estimated_salary' ainda não existe no schema do Supabase, tenta sem a coluna
+    if (error && (error.code === '42703' || String(error.message).includes('estimated_salary'))) {
+      const sanitizedRow = { ...row };
+      delete sanitizedRow.estimated_salary;
+      const retry = await supabase
+        .from('players')
+        .upsert(sanitizedRow, { onConflict: 'id' })
+        .select();
+      if (!retry.error) {
+        return { success: true, data: retry.data };
+      }
+      error = retry.error;
+    }
 
     if (error) {
       console.warn('[Supabase] Erro ao sincronizar jogador:', error.message);
@@ -720,6 +741,66 @@ export async function upsertRawFixturesToVault(items) {
     return { success: false, error: err.message };
   }
 }
+
+/**
+ * Busca configurações e cenários do Time Sombra no Supabase (com fallback resiliente)
+ */
+export async function fetchShadowTeamsFromSupabase() {
+  try {
+    const { data, error } = await supabase
+      .from('shadow_teams')
+      .select('*')
+      .order('created_at', { ascending: true });
+
+    if (error) {
+      // Se tabela não existir no Supabase, apenas retorna null sem quebrar a UI
+      return null;
+    }
+    if (Array.isArray(data) && data.length > 0) {
+      return data.map(item => ({
+        id: item.id,
+        nome: item.nome,
+        formacao: item.formacao,
+        budget_ceiling: item.budget_ceiling,
+        escalacao: item.escalacao || {},
+        customPositions: item.custom_positions || {}
+      }));
+    }
+    return null;
+  } catch (err) {
+    return null;
+  }
+}
+
+/**
+ * Salva ou atualiza um cenário do Time Sombra no Supabase (com fallback resiliente)
+ */
+export async function saveShadowTeamToSupabase(team) {
+  try {
+    if (!team || !team.id) return { success: false };
+    const row = {
+      id: team.id,
+      nome: team.nome,
+      formacao: team.formacao,
+      budget_ceiling: team.budget_ceiling || null,
+      escalacao: team.escalacao || {},
+      custom_positions: team.customPositions || {},
+      updated_at: new Date().toISOString()
+    };
+
+    const { data, error } = await supabase
+      .from('shadow_teams')
+      .upsert(row, { onConflict: 'id' });
+
+    if (error) {
+      return { success: false, error: error.message };
+    }
+    return { success: true, data };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+}
+
 
 
 

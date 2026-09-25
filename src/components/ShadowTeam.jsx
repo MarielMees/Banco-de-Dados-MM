@@ -11,11 +11,32 @@ import {
   FileText,
   Loader2,
   RotateCcw,
-  Menu
+  Menu,
+  DollarSign,
+  TrendingUp,
+  Wallet,
+  Coins,
+  AlertTriangle,
+  Pencil,
+  Check,
+  Percent,
+  Sparkles
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import { toPng } from 'html-to-image'
 import UserBadge from './UserBadge'
+import {
+  formatBRL,
+  formatCompactBRL,
+  parseBRL,
+  getAthleteSalary,
+  isAthleteSalaryCustom,
+  calculateTeamPayroll,
+  formatSalaryDiff,
+  getDefaultEstimatedSalary,
+  DEFAULT_TIER_SALARIES
+} from '../utils/salaryUtils'
+import { saveShadowTeamToSupabase, upsertPlayerToSupabase } from '../services/supabaseService'
 
 // Definição das 5 formações táticas com coordenadas percentuais (top / left)
 // top: 0% = Ataque, 100% = Gol
@@ -102,40 +123,43 @@ const FORMATIONS_CONFIG = {
   }
 }
 
-// Dados mockados iniciais para os cenários padrão (campinho 100% VAZIO)
+// Dados mockados iniciais para os cenários padrão (campinho 100% VAZIO) com tetos orçamentários
 const INITIAL_SHADOW_TEAMS = [
   {
     id: 'serie-a',
     nome: '★ Série A 2026',
     formacao: '4-3-3',
+    budget_ceiling: 2500000,
     escalacao: {}
   },
   {
     id: 'serie-b',
     nome: 'Série B',
     formacao: '4-2-3-1',
+    budget_ceiling: 1500000,
     escalacao: {}
   },
   {
     id: 'serie-c',
     nome: 'Série C',
     formacao: '4-4-2',
+    budget_ceiling: 800000,
     escalacao: {}
   },
   {
     id: 'alternativas',
     nome: 'Alternativas / Mercado',
     formacao: '3-4-3',
+    budget_ceiling: 2000000,
     escalacao: {}
   }
 ]
 
-export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOpenMobileMenu }) {
-  // Limpa chaves de cache que possam reter mocks antigos
+export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOpenMobileMenu, onSavePlayer }) {
+  // Limpa apenas chaves antigas sem tocar nos dados do Time Sombra
   useEffect(() => {
     try {
       localStorage.removeItem('radar_selection_squad')
-      localStorage.removeItem('radar_shadow_teams')
     } catch (e) {}
   }, [])
 
@@ -154,7 +178,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     return INITIAL_SHADOW_TEAMS
   })
 
-  // Persistir alterações no localStorage automaticamente
+  // Persistir alterações no localStorage e sincronizar em nuvem
   useEffect(() => {
     if (shadowTeams && shadowTeams.length > 0) {
       try {
@@ -201,6 +225,31 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const [isRenameModalOpen, setIsRenameModalOpen] = useState(false)
   const [renameValue, setRenameValue] = useState('')
 
+  // Estados do Simulador de Orçamento e Folha Salarial
+  const [isEditingBudgetCeiling, setIsEditingBudgetCeiling] = useState(false)
+  const [editingSalary, setEditingSalary] = useState(null) // { posId, posLabel, athleteIndex, athlete, initialSalary }
+  const [salaryInputVal, setSalaryInputVal] = useState('')
+  const [positionImpacts, setPositionImpacts] = useState({}) // { [posId]: { diff: number, timestamp: number } }
+
+  // Auto-limpeza suave dos micro-badges de impacto após 7 segundos
+  useEffect(() => {
+    const keys = Object.keys(positionImpacts)
+    if (keys.length === 0) return
+    const timer = setTimeout(() => {
+      const now = Date.now()
+      setPositionImpacts(prev => {
+        const next = {}
+        Object.entries(prev).forEach(([k, v]) => {
+          if (now - v.timestamp < 7000) {
+            next[k] = v
+          }
+        })
+        return next
+      })
+    }, 7000)
+    return () => clearTimeout(timer)
+  }, [positionImpacts])
+
   // Obter cenário ativo
   const activeTeam = useMemo(() => {
     return shadowTeams.find(t => t.id === activeTeamId) || shadowTeams[0]
@@ -210,6 +259,20 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const slotsData = activeTeam.escalacao || {}
   const customPositions = activeTeam.customPositions || {}
   const activeFormation = FORMATIONS_CONFIG[selectedFormation] || FORMATIONS_CONFIG['4-3-3']
+
+  // Métricas e Cálculos Financeiros em Tempo Real
+  const budgetCeiling = activeTeam.budget_ceiling !== undefined && activeTeam.budget_ceiling !== null
+    ? Number(activeTeam.budget_ceiling)
+    : 2500000
+
+  const payrollStats = useMemo(() => {
+    return calculateTeamPayroll(activeFormation.positions, slotsData, players)
+  }, [activeFormation, slotsData, players])
+
+  const folhaProjetada = payrollStats.folhaProjetada
+  const saldoOrcamentario = budgetCeiling - folhaProjetada
+  const isBudgetExceeded = saldoOrcamentario < 0
+  const percentualComprometido = budgetCeiling > 0 ? (folhaProjetada / budgetCeiling) * 100 : 0
 
   // Mudar formação do cenário ativo
   const handleFormationChange = (fmt) => {
@@ -512,7 +575,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 alt: player.alt || player.altura,
                 anoNascimento: player.anoNascimento || player.an,
                 altura: player.altura || player.alt,
-                posicaoOriginal: player.posicao
+                posicaoOriginal: player.posicao,
+                estimated_salary: player.estimated_salary || player.salarioEstimado || null,
+                salarioEstimado: player.estimated_salary || player.salarioEstimado || null
               }
             ]
           }
@@ -525,6 +590,129 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     setPlayerSearch('')
   }
 
+  // Alterar teto orçamentário mensal do cenário ativo
+  const handleBudgetCeilingChange = (newVal) => {
+    const numericCeiling = typeof newVal === 'number' ? newVal : parseBRL(newVal)
+    setShadowTeams(prev => prev.map(team => {
+      if (team.id === activeTeam.id) {
+        const updated = { ...team, budget_ceiling: numericCeiling }
+        saveShadowTeamToSupabase(updated)
+        return updated
+      }
+      return team
+    }))
+  }
+
+  // Promover reserva a titular imediato (troca 1ª com a opção clicada)
+  const handlePromoteToStarter = (posId, candidateIndex) => {
+    if (candidateIndex === 0) return
+
+    setShadowTeams(prev => prev.map(team => {
+      if (team.id === activeTeam.id) {
+        const currentList = [...(team.escalacao[posId] || [])]
+        if (candidateIndex >= currentList.length) return team
+
+        const oldTitular = currentList[0]
+        const newTitular = currentList[candidateIndex]
+
+        const oldSalary = getAthleteSalary(oldTitular, players)
+        const newSalary = getAthleteSalary(newTitular, players)
+        const diff = newSalary - oldSalary
+
+        // Troca os dois de lugar no array
+        const temp = currentList[0]
+        currentList[0] = currentList[candidateIndex]
+        currentList[candidateIndex] = temp
+
+        // Registra impacto salarial dinâmico na posição
+        setPositionImpacts(prevImpacts => ({
+          ...prevImpacts,
+          [posId]: {
+            diff,
+            timestamp: Date.now()
+          }
+        }))
+
+        const updatedTeam = {
+          ...team,
+          escalacao: {
+            ...team.escalacao,
+            [posId]: currentList
+          }
+        }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
+      }
+      return team
+    }))
+  }
+
+  // Abrir modal de edição rápida de salário
+  const handleOpenSalaryModal = (posId, posLabel, athleteIndex, athlete) => {
+    const curSal = getAthleteSalary(athlete, players)
+    setEditingSalary({
+      posId,
+      posLabel,
+      athleteIndex,
+      athlete,
+      initialSalary: curSal
+    })
+    setSalaryInputVal(formatBRL(curSal, true))
+  }
+
+  // Salvar salário editado do atleta
+  const handleSaveAthleteSalary = (posId, athleteIndex, athlete, rawInputVal) => {
+    const numericSalary = parseBRL(rawInputVal)
+
+    // 1. Atualiza no cenário do Time Sombra ativo
+    setShadowTeams(prev => prev.map(team => {
+      if (team.id === activeTeam.id) {
+        const currentList = [...(team.escalacao[posId] || [])]
+        if (athleteIndex < currentList.length) {
+          currentList[athleteIndex] = {
+            ...currentList[athleteIndex],
+            estimated_salary: numericSalary,
+            salarioEstimado: numericSalary
+          }
+        }
+        const updatedTeam = {
+          ...team,
+          escalacao: {
+            ...team.escalacao,
+            [posId]: currentList
+          }
+        }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
+      }
+      return team
+    }))
+
+    // 2. Atualiza atleta globalmente
+    const updatedPlayerData = {
+      ...athlete,
+      estimated_salary: numericSalary,
+      salarioEstimado: numericSalary
+    }
+
+    if (onSavePlayer) {
+      onSavePlayer(updatedPlayerData)
+    } else {
+      try {
+        const cached = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
+        if (cached) {
+          const list = JSON.parse(cached)
+          const updated = list.map(p => String(p.id) === String(athlete.id) ? { ...p, ...updatedPlayerData } : p)
+          localStorage.setItem('scout_players', JSON.stringify(updated))
+          localStorage.setItem('radar_players', JSON.stringify(updated))
+        }
+      } catch (e) {}
+      upsertPlayerToSupabase(updatedPlayerData)
+    }
+
+    setEditingSalary(null)
+  }
+
   // Criar novo Time Sombra
   const handleCreateNewTeam = (e) => {
     e.preventDefault()
@@ -535,6 +723,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       id: newId,
       nome: newTeamName.trim(),
       formacao: '4-3-3',
+      budget_ceiling: 2500000,
       escalacao: {}
     }
 
@@ -977,6 +1166,209 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
       {/* 2. O CAMPO DE FUTEBOL (CAMPOGRAMA VISUAL) */}
       <main className="flex-1 max-w-[1720px] w-full mx-auto px-3 md:px-6 py-4 md:py-6 flex flex-col items-center overflow-x-hidden md:overflow-x-auto">
+        {/* PAINEL EXECUTIVO: SIMULADOR DE ORÇAMENTO E FOLHA SALARIAL */}
+        <div className="w-full max-w-[1400px] mb-3 bg-gradient-to-r from-[#0a111e] via-[#0d1728] to-[#0a111e] border border-slate-800 rounded-2xl p-3.5 md:p-4 shadow-xl backdrop-blur-md">
+          {/* Topo do Painel de Orçamento */}
+          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 mb-3 border-b border-slate-800/80">
+            <div className="flex items-center gap-2.5">
+              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                <Wallet className="w-4 h-4" />
+              </div>
+              <div>
+                <h2 className="text-xs md:text-sm font-black text-white tracking-wide uppercase flex items-center gap-2">
+                  <span>Simulador de Orçamento & Folha Salarial</span>
+                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 lowercase">
+                    tempo real
+                  </span>
+                </h2>
+                <p className="text-[10px] text-slate-400">
+                  Projeção financeira baseada exclusivamente nos 11 titulares ativos na formação selecionada
+                </p>
+              </div>
+            </div>
+
+            {/* Presets Rápidos de Teto Salarial */}
+            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+              <span className="text-[10px] font-bold uppercase text-slate-500 mr-1 hidden sm:inline">
+                Atalhos de Teto:
+              </span>
+              {[1000000, 1500000, 2000000, 2500000, 3000000, 4000000].map((preset) => (
+                <button
+                  key={preset}
+                  type="button"
+                  onClick={() => handleBudgetCeilingChange(preset)}
+                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
+                    budgetCeiling === preset
+                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm shadow-emerald-500/20'
+                      : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                  }`}
+                >
+                  {formatCompactBRL(preset)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* 3 Cartões de Métricas Principais */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 md:gap-4">
+            {/* Métrica 1: Teto Salarial Mensal */}
+            <div className="bg-[#111c2e] border border-slate-700/70 rounded-xl p-3 flex flex-col justify-between shadow-sm relative group">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <DollarSign className="w-3.5 h-3.5 text-cyan-400" />
+                  Teto Salarial Mensal
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setIsEditingBudgetCeiling(!isEditingBudgetCeiling)}
+                  className="text-slate-400 hover:text-cyan-300 p-1 rounded hover:bg-slate-800 transition cursor-pointer"
+                  title="Editar teto orçamentário mensal"
+                >
+                  <Pencil className="w-3 h-3 text-cyan-400" />
+                </button>
+              </div>
+
+              {isEditingBudgetCeiling ? (
+                <div className="my-0.5">
+                  <input
+                    type="text"
+                    defaultValue={formatBRL(budgetCeiling, true)}
+                    onBlur={(e) => {
+                      handleBudgetCeilingChange(e.target.value)
+                      setIsEditingBudgetCeiling(false)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleBudgetCeilingChange(e.currentTarget.value)
+                        setIsEditingBudgetCeiling(false)
+                      } else if (e.key === 'Escape') {
+                        setIsEditingBudgetCeiling(false)
+                      }
+                    }}
+                    autoFocus
+                    placeholder="R$ 2.000.000,00"
+                    className="w-full bg-[#080d16] border border-cyan-500 rounded px-2.5 py-1 text-base font-black text-cyan-300 focus:outline-none focus:ring-1 focus:ring-cyan-400"
+                  />
+                </div>
+              ) : (
+                <div
+                  onClick={() => setIsEditingBudgetCeiling(true)}
+                  className="cursor-pointer group-hover:text-cyan-300 transition-colors my-0.5"
+                  title="Clique para editar valor do teto"
+                >
+                  <div className="text-lg md:text-xl font-black text-white tracking-tight">
+                    {formatBRL(budgetCeiling, true)}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
+                <span className="truncate">Definido p/ {activeTeam.nome}</span>
+                <span className="text-cyan-400/80 font-medium shrink-0 ml-1">clique p/ editar</span>
+              </div>
+            </div>
+
+            {/* Métrica 2: Folha Projetada Atual */}
+            <div className="bg-[#111c2e] border border-slate-700/70 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
+                  <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
+                  Folha Projetada Atual
+                </span>
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
+                  {payrollStats.startersCount}/11 titulares
+                </span>
+              </div>
+
+              <div className="text-lg md:text-xl font-black text-amber-300 tracking-tight my-0.5">
+                {formatBRL(folhaProjetada, true)}
+              </div>
+
+              <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
+                <span>Soma dos 11 titulares</span>
+                <span className="text-slate-500 font-medium">
+                  {payrollStats.customSalaryCount} salários definidos
+                </span>
+              </div>
+            </div>
+
+            {/* Métrica 3: Saldo / Variação */}
+            <div
+              className={`border rounded-xl p-3 flex flex-col justify-between shadow-sm transition-all ${
+                isBudgetExceeded
+                  ? 'bg-rose-950/25 border-rose-500/60 shadow-rose-950/40'
+                  : 'bg-emerald-950/25 border-emerald-500/50 shadow-emerald-950/30'
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                  {isBudgetExceeded ? (
+                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-bounce" />
+                  ) : (
+                    <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                  )}
+                  Saldo / Variação
+                </span>
+                <span
+                  className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full border ${
+                    isBudgetExceeded
+                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                  }`}
+                >
+                  {isBudgetExceeded ? 'TETO ESTOURADO' : 'DENTRO DO TETO'}
+                </span>
+              </div>
+
+              <div
+                className={`text-lg md:text-xl font-black tracking-tight my-0.5 ${
+                  isBudgetExceeded ? 'text-rose-400' : 'text-emerald-300'
+                }`}
+              >
+                {isBudgetExceeded
+                  ? `- ${formatBRL(Math.abs(saldoOrcamentario), true)}`
+                  : `+ ${formatBRL(saldoOrcamentario, true)}`}
+              </div>
+
+              <div className="text-[10px] mt-1 flex items-center justify-between font-semibold">
+                <span className={isBudgetExceeded ? 'text-rose-300/90' : 'text-emerald-400/90'}>
+                  {isBudgetExceeded ? 'Excedente (necessita ajuste)' : 'Margem disponível na folha'}
+                </span>
+                <span className="text-slate-400">
+                  {percentualComprometido.toFixed(1)}% utilizado
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Barra de Progresso Visual do Teto Salarial */}
+          <div className="mt-3 pt-2.5 border-t border-slate-800/60">
+            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
+              <span className="flex items-center gap-1 font-semibold">
+                <span>Comprometimento Orçamentário:</span>
+                <strong className={isBudgetExceeded ? 'text-rose-400' : 'text-emerald-400'}>
+                  {percentualComprometido.toFixed(1)}%
+                </strong>
+              </span>
+              <span>
+                {formatBRL(folhaProjetada, false)} de {formatBRL(budgetCeiling, false)}
+              </span>
+            </div>
+            <div className="w-full h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden relative">
+              <div
+                className={`h-full rounded-full transition-all duration-500 ${
+                  isBudgetExceeded
+                    ? 'bg-gradient-to-r from-amber-500 to-rose-500'
+                    : percentualComprometido > 85
+                    ? 'bg-gradient-to-r from-emerald-500 via-amber-500 to-amber-400'
+                    : 'bg-gradient-to-r from-emerald-500 to-teal-400'
+                }`}
+                style={{ width: `${Math.min(percentualComprometido, 100)}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
         {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS E ETÁRIAS */}
         <div className="w-full max-w-[1400px] mb-4 flex flex-wrap items-center justify-between gap-3 bg-[#0d1522] border border-slate-800/80 rounded-2xl p-3 px-5 shadow-lg backdrop-blur-sm">
           <div className="flex items-center gap-4 flex-wrap">
@@ -1103,6 +1495,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
             const isFull = currentSlots.length >= 5
             const posCoords = customPositions[pos.id] || { top: `${pos.top}%`, left: `${pos.left}%` }
             const isBeingMoved = draggingPosId === pos.id
+            const recentImpact = positionImpacts[pos.id]
 
             return (
               <div
@@ -1117,7 +1510,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   onDragOver={(e) => handleDragOver(e, pos.id)}
                   onDragLeave={(e) => handleDragLeave(e, pos.id)}
                   onDrop={(e) => handleDropOnSlot(e, pos.id, null)}
-                  className={`hidden md:block w-[220px] min-w-[220px] max-w-[230px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
+                  className={`hidden md:block w-[225px] min-w-[225px] max-w-[235px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
                     isBeingMoved
                       ? 'border-2 border-emerald-400 shadow-emerald-500/30 scale-105 ring-2 ring-emerald-500/20'
                       : dragOverTarget === pos.id
@@ -1128,7 +1521,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   {/* Topo do Card: Alça Exclusiva de Arraste da Posição + Nome + Botão "+" */}
                   <div
                     onMouseDown={(e) => handlePositionMouseDown(e, pos.id)}
-                    className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-2 cursor-move select-none active:cursor-grabbing group/header"
+                    className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5 cursor-move select-none active:cursor-grabbing group/header"
                     title="Arraste pelo cabeçalho para reposicionar livremente no gramado"
                   >
                     <div className="flex items-center gap-1.5 min-w-0">
@@ -1153,6 +1546,51 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                     )}
                   </div>
 
+                  {/* Seletor Rápido de Hierarquia (1ª, 2ª, 3ª Opção) + Micro-Badge de Impacto Salarial */}
+                  {currentSlots.length > 0 && (
+                    <div className="flex items-center gap-1 mb-2 pb-1 border-b border-slate-800/60 overflow-x-auto no-scrollbar">
+                      <div className="flex items-center gap-1">
+                        {currentSlots.map((player, idx) => {
+                          const isStarter = idx === 0
+                          const priorityLabel = `${idx + 1}ª`
+                          return (
+                            <button
+                              key={player.id || idx}
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                if (!isStarter) {
+                                  handlePromoteToStarter(pos.id, idx)
+                                }
+                              }}
+                              title={isStarter ? `Titular ativo: ${player.nome}` : `Promover ${player.nome} a Titular`}
+                              className={`px-1.5 py-0.5 rounded text-[8.5px] font-black transition-all cursor-pointer ${
+                                isStarter
+                                  ? 'bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-300'
+                                  : 'bg-slate-800/90 text-slate-400 hover:text-white hover:bg-slate-700 border border-slate-700/60'
+                              }`}
+                            >
+                              {priorityLabel}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Micro-badge de Impacto Salarial ao alternar titulares */}
+                      {recentImpact && (() => {
+                        const diffInfo = formatSalaryDiff(recentImpact.diff)
+                        return (
+                          <div
+                            className={`ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black border animate-in fade-in zoom-in-95 duration-200 shrink-0 ${diffInfo.colorClass}`}
+                            title={`Impacto salarial na troca: ${diffInfo.text}`}
+                          >
+                            <span>{diffInfo.compactText}</span>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  )}
+
                   {/* Corpo do Card: Linhas Ordenadas (1º Titular + Suplentes) */}
                   <div className="space-y-1.5 h-auto">
                     {/* 1º Titular */}
@@ -1164,6 +1602,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                         const slotKey = `${pos.id}-0`
                         const isBeingDragged = draggedItem?.posId === pos.id && draggedItem?.index === 0
                         const isDragOverThis = dragOverTarget === slotKey
+                        const isCustomSal = isAthleteSalaryCustom(fullTitular, players)
 
                         return (
                           <div
@@ -1224,6 +1663,33 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                 {subDetails}
                               </div>
                             )}
+
+                            {/* Linha de Salário Estimado com Edição Rápida */}
+                            <div className="flex items-center justify-between mt-1 pt-1 border-t border-slate-800/60">
+                              <button
+                                type="button"
+                                data-export-hide="false"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleOpenSalaryModal(pos.id, pos.label, 0, fullTitular)
+                                }}
+                                title="Clique para editar o salário estimado deste atleta"
+                                className="flex items-center gap-1 text-[9px] text-emerald-400/90 hover:text-emerald-300 font-bold cursor-pointer group/sal hover:underline"
+                              >
+                                <Coins className="w-2.5 h-2.5 text-emerald-400 group-hover/sal:scale-110 transition-transform" />
+                                <span>{formatBRL(getAthleteSalary(fullTitular, players), false)}/mês</span>
+                                <Pencil className="w-2 h-2 text-slate-400 opacity-60 group-hover/sal:opacity-100" />
+                              </button>
+                              {isCustomSal ? (
+                                <span className="text-[7.5px] font-black px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
+                                  MANUAL
+                                </span>
+                              ) : (
+                                <span className="text-[7.5px] font-medium px-1 rounded bg-slate-800/80 text-slate-500">
+                                  ESTIMADO
+                                </span>
+                              )}
+                            </div>
                           </div>
                         )
                       })()
@@ -1323,6 +1789,28 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               {subDetails}
                             </div>
                           )}
+
+                          {/* Linha de Salário do Suplente com Edição Rápida */}
+                          <div className="flex items-center justify-between mt-0.5 pt-0.5 border-t border-slate-800/40">
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation()
+                                handleOpenSalaryModal(pos.id, pos.label, idx + 1, fullPlayer)
+                              }}
+                              title="Clique para editar salário estimado"
+                              className="flex items-center gap-1 text-[8.5px] text-slate-400 hover:text-emerald-300 font-semibold cursor-pointer group/alt-sal hover:underline"
+                            >
+                              <Coins className="w-2 h-2 text-slate-500 group-hover/alt-sal:text-emerald-400" />
+                              <span>{formatBRL(getAthleteSalary(fullPlayer, players), false)}</span>
+                              <Pencil className="w-2 h-2 opacity-50 group-hover/alt-sal:opacity-100" />
+                            </button>
+                            {isAthleteSalaryCustom(fullPlayer, players) && (
+                              <span className="text-[7px] font-bold px-1 rounded bg-slate-800 text-emerald-400">
+                                MANUAL
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )
                     })}
@@ -1386,12 +1874,58 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               </span>
                             )}
                           </div>
-                          <span className="mt-1 text-[10px] font-bold text-white max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                          <span className="mt-1 text-[10px] font-bold text-white max-w-[75px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
                             {fullTitular.nome}
                           </span>
-                          <span className="text-[8px] font-semibold text-emerald-300/90 max-w-[65px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                          <span className="text-[8px] font-semibold text-emerald-300/90 max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
                             {fullTitular.clubeAtual || fullTitular.clube || birthYearFormatted || ''}
                           </span>
+
+                          {/* Salário Estimado Mobile com toque para edição */}
+                          <div
+                            onClick={(e) => {
+                              e.stopPropagation()
+                              handleOpenSalaryModal(pos.id, pos.label, 0, fullTitular)
+                            }}
+                            className="mt-0.5 flex items-center gap-0.5 px-1 py-0.2 rounded bg-slate-950/90 border border-slate-800 text-[8px] font-bold text-emerald-300 drop-shadow cursor-pointer hover:border-emerald-400"
+                            title="Editar salário estimado"
+                          >
+                            <span>{formatCompactBRL(getAthleteSalary(fullTitular, players))}</span>
+                            <Pencil className="w-1.5 h-1.5 opacity-60 text-slate-400" />
+                          </div>
+
+                          {/* Seletor rápido de opções em mobile se houver suplentes */}
+                          {currentSlots.length > 1 && (
+                            <div className="mt-1 flex items-center gap-0.5">
+                              {currentSlots.slice(0, 3).map((pl, idx) => (
+                                <button
+                                  key={pl.id || idx}
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    if (idx !== 0) handlePromoteToStarter(pos.id, idx)
+                                  }}
+                                  className={`px-1 py-0.2 rounded text-[7.5px] font-black ${
+                                    idx === 0
+                                      ? 'bg-emerald-400 text-slate-950 font-bold'
+                                      : 'bg-slate-900 text-slate-300 border border-slate-700'
+                                  }`}
+                                >
+                                  {idx + 1}ª
+                                </button>
+                              ))}
+                            </div>
+                          )}
+
+                          {/* Micro-badge de Impacto Mobile */}
+                          {recentImpact && (() => {
+                            const diffInfo = formatSalaryDiff(recentImpact.diff)
+                            return (
+                              <span className={`mt-0.5 px-1 rounded text-[7.5px] font-black border ${diffInfo.colorClass}`}>
+                                {diffInfo.compactText}
+                              </span>
+                            )
+                          })()}
                         </>
                       )
                     })()
@@ -1634,6 +2168,130 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   className="px-4 py-1.5 rounded-lg bg-emerald-400 hover:bg-emerald-300 disabled:opacity-50 text-slate-950 font-bold text-xs shadow-md shadow-emerald-500/20 cursor-pointer"
                 >
                   Salvar
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* 7. MODAL DE EDIÇÃO RÁPIDA DE SALÁRIO ESTIMADO */}
+      {editingSalary && (
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xs flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-150">
+          <div className="bg-[#0b121e] border border-slate-700/80 rounded-2xl w-full max-w-md overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
+            {/* Header Modal */}
+            <div className="p-4 bg-gradient-to-r from-[#101b2d] to-[#0d1624] border-b border-slate-800 flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <div className="w-9 h-9 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Coins className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-bold text-white">Editar Salário Estimado</h3>
+                  <p className="text-[11px] text-slate-400 truncate max-w-[240px]">
+                    {editingSalary.athlete.nome} &bull; {editingSalary.posLabel || 'Atleta'}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setEditingSalary(null)}
+                className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Conteúdo */}
+            <form
+              onSubmit={(e) => {
+                e.preventDefault()
+                handleSaveAthleteSalary(
+                  editingSalary.posId,
+                  editingSalary.athleteIndex,
+                  editingSalary.athlete,
+                  salaryInputVal
+                )
+              }}
+              className="p-5 space-y-4"
+            >
+              {/* Card Resumo do Atleta */}
+              <div className="flex items-center justify-between bg-[#111a29] p-3 rounded-xl border border-slate-800">
+                <div>
+                  <div className="text-xs font-bold text-white">{editingSalary.athlete.nome}</div>
+                  <div className="text-[11px] text-slate-400">
+                    {editingSalary.athlete.clubeAtual || editingSalary.athlete.ca || editingSalary.athlete.clube || 'Sem clube'}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className={`text-[9px] font-bold px-2 py-0.5 rounded border ${getNivelStyle(editingSalary.athlete.nivel)}`}>
+                    Tier {editingSalary.athlete.nivel || '—'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Campo de Salário Estimado */}
+              <div>
+                <label className="block text-[11px] font-extrabold uppercase tracking-wider text-slate-300 mb-1.5">
+                  Salário Mensal Estimado (R$) *
+                </label>
+                <div className="relative">
+                  <input
+                    type="text"
+                    value={salaryInputVal}
+                    onChange={(e) => setSalaryInputVal(e.target.value)}
+                    placeholder="R$ 80.000,00"
+                    className="w-full bg-[#070b13] border border-slate-700 focus:border-emerald-500 rounded-xl px-3.5 py-2.5 text-base font-black text-emerald-300 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
+                    autoFocus
+                  />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  Recalcula automaticamente a folha projetada dos 11 titulares e o saldo disponível.
+                </p>
+              </div>
+
+              {/* Sugestões Rápidas de Mercado */}
+              <div>
+                <span className="block text-[10px] font-bold uppercase text-slate-400 mb-2">
+                  Atalhos Rápidos de Mercado:
+                </span>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[25000, 45000, 85000, 130000, 220000, 350000].map((s) => (
+                    <button
+                      key={s}
+                      type="button"
+                      onClick={() => setSalaryInputVal(formatBRL(s, true))}
+                      className="px-2 py-1.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white border border-slate-800 text-[11px] font-semibold transition cursor-pointer text-center"
+                    >
+                      {formatCompactBRL(s)}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Botão de Sugestão pelo Tier do Atleta */}
+                <button
+                  type="button"
+                  onClick={() => setSalaryInputVal(formatBRL(getDefaultEstimatedSalary(editingSalary.athlete.nivel), true))}
+                  className="w-full mt-2 py-1.5 px-3 rounded-lg bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 text-[11px] font-bold transition cursor-pointer text-center"
+                >
+                  Usar Padrão do Tier {editingSalary.athlete.nivel}: {formatBRL(getDefaultEstimatedSalary(editingSalary.athlete.nivel), true)}
+                </button>
+              </div>
+
+              {/* Botões de Ação */}
+              <div className="p-3 -mx-5 -mb-5 mt-4 bg-[#0a0f18] border-t border-slate-800 flex items-center justify-end gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setEditingSalary(null)}
+                  className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold transition cursor-pointer"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="submit"
+                  className="px-4 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 text-xs font-bold shadow-lg shadow-emerald-500/20 transition cursor-pointer flex items-center gap-1.5"
+                >
+                  <Check className="w-3.5 h-3.5 stroke-[3]" />
+                  <span>Salvar Salário</span>
                 </button>
               </div>
             </form>

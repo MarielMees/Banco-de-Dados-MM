@@ -681,6 +681,7 @@ function App() {
           user={session.user}
           onSignOut={handleSignOut}
           onOpenMobileMenu={() => setIsMobileMenuOpen(true)}
+          onSavePlayer={handleSavePlayer}
         />
       ) : currentTab === 'selecao-campeonato' ? (
         <TournamentBestXI
