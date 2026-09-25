@@ -42,6 +42,14 @@ import CharacteristicsModal from './CharacteristicsModal'
 import PlayerModal from './PlayerModal'
 import ConfirmDeleteModal from './ConfirmDeleteModal'
 import UserBadge from './UserBadge'
+import {
+  getContractStatus,
+  getDaysToContractExpiry,
+  PRIORITY_POSITION_GROUPS,
+  QUICK_TIERS,
+  matchesPriorityPosition,
+  matchesQuickTier
+} from '../utils/contractUtils'
 
 const iconMap = {
   Shield,
@@ -147,6 +155,18 @@ export default function PlayerList({
   const [showReportsPlayerIds, setShowReportsPlayerIds] = useState(new Set())
   const [previewReport, setPreviewReport] = useState(null)
 
+  // Filtros rápidos do Radar de Fim de Contrato (Janela de 180 Dias / Pré-Contrato)
+  const isContractRadarTab = activePosition === 'radar-contratos' || activePosition === 'vencendo'
+  const [contractWindowFilter, setContractWindowFilter] = useState(() => isContractRadarTab ? 'PRE_CONTRACT_180' : 'ALL')
+  const [quickPosFilter, setQuickPosFilter] = useState('ALL')
+  const [quickTierFilter, setQuickTierFilter] = useState('ALL')
+
+  React.useEffect(() => {
+    if (activePosition === 'radar-contratos' || activePosition === 'vencendo') {
+      setContractWindowFilter('PRE_CONTRACT_180')
+    }
+  }, [activePosition])
+
   const [playerToDelete, setPlayerToDelete] = useState(null)
   const [openPositionMenuPlayerId, setOpenPositionMenuPlayerId] = useState(null)
   const [toastMessage, setToastMessage] = useState(null)
@@ -223,7 +243,17 @@ export default function PlayerList({
     let count = 0
     let alertCount = 0
 
-    if (itemId === 'radar-sub23') {
+    if (itemId === 'radar-contratos' || itemId === 'vencendo') {
+      const list = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isPreContract || s.isExpired
+      })
+      count = list.length
+      alertCount = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isCritical || s.isExpired
+      }).length
+    } else if (itemId === 'radar-sub23') {
       const list = players.filter(p => p.radarSub23)
       count = list.length
       alertCount = list.filter(p => p.alerta === 'VENCENDO').length
@@ -261,6 +291,42 @@ export default function PlayerList({
     return { count, alertCount }
   }
 
+  // Contagens dinâmicas para o switcher do Radar de Fim de Contrato
+  const contractCounts = useMemo(() => {
+    const pool = players.filter(p => {
+      if (activePosition === 'radar-contratos' || activePosition === 'vencendo' || activePosition === 'visao-geral') {
+        return true
+      }
+      if (['goleiro', 'zagueiro', 'zag-canhoto', 'lat-direito', 'lat-esquerdo', 'medio', 'medio-central', 'meia-ofensivo', 'extremo', 'centroavante'].includes(activePosition)) {
+        const norm = normalizePosId(p.posicao, p.pe)
+        if (activePosition === 'medio') return norm === 'medio' || norm === 'medio-central'
+        return norm === activePosition
+      }
+      if (activePosition === 'radar-sub23') return Boolean(p.radarSub23)
+      if (activePosition === 'monitoramento') return Boolean(p.monitoramento)
+      if (activePosition === 'hot-list') return Boolean(p.hotList)
+      return true
+    })
+
+    let preContract = 0
+    let critical = 0
+    let expired = 0
+
+    pool.forEach(p => {
+      const st = getContractStatus(p)
+      if (st.isPreContract) preContract++
+      if (st.isCritical) critical++
+      if (st.isExpired) expired++
+    })
+
+    return {
+      total: pool.length,
+      preContract,
+      critical,
+      expired
+    }
+  }, [players, activePosition])
+
   const filteredPlayers = useMemo(() => {
     return players
       .filter(p => {
@@ -289,8 +355,12 @@ export default function PlayerList({
           if (!p.monitoramento) return false
         } else if (activePosition === 'hot-list') {
           if (!p.hotList) return false
-        } else if (activePosition === 'vencendo') {
-          if (p.alerta !== 'VENCENDO') return false
+        } else if (activePosition === 'radar-contratos' || activePosition === 'vencendo') {
+          // Na aba de Radar de Contratos, por padrão restringe a quem está na janela de 180d ou expirados
+          const st = getContractStatus(p)
+          if (contractWindowFilter === 'ALL') {
+            if (!st.isPreContract && !st.isExpired) return false
+          }
         } else if (['goleiro', 'zagueiro', 'zag-canhoto', 'lat-direito', 'lat-esquerdo', 'medio', 'medio-central', 'meia-ofensivo', 'extremo', 'centroavante'].includes(activePosition)) {
           const normPos = normalizePosId(p.posicao, p.pe)
           // Se for provisório sem posição definida ou não reconhecida, mantém visível para não se perder
@@ -307,6 +377,26 @@ export default function PlayerList({
               if (normPos !== activePosition) return false
             }
           }
+        }
+
+        // 1. Filtro da Janela de Contrato do Radar (Switcher: Todos | Pré-Contrato ≤ 180d | Críticos ≤ 90d | Expirados)
+        const contractStatus = getContractStatus(p)
+        if (contractWindowFilter === 'PRE_CONTRACT_180') {
+          if (!contractStatus.isPreContract) return false
+        } else if (contractWindowFilter === 'CRITICAL_90') {
+          if (!contractStatus.isCritical) return false
+        } else if (contractWindowFilter === 'EXPIRED') {
+          if (!contractStatus.isExpired) return false
+        }
+
+        // 2. Filtro Rápido de Posição Prioritária (GOL, ZAG, LAT, VOL, MEI, ATA)
+        if (quickPosFilter !== 'ALL') {
+          if (!matchesPriorityPosition(p, quickPosFilter)) return false
+        }
+
+        // 3. Filtro Rápido de Tier (A+, A, B+, B, C)
+        if (quickTierFilter !== 'ALL') {
+          if (!matchesQuickTier(p, quickTierFilter)) return false
         }
 
         // Busca textual
@@ -359,9 +449,17 @@ export default function PlayerList({
         if (sortOrder === 'name-desc') return (b.nome || '').localeCompare(a.nome || '')
         if (sortOrder === 'alt-desc') return (b.alt || 0) - (a.alt || 0)
         if (sortOrder === 'an-desc') return (b.an || 0) - (a.an || 0)
+        if (sortOrder === 'contract-asc') {
+          const daysA = getDaysToContractExpiry(a)
+          const daysB = getDaysToContractExpiry(b)
+          if (daysA === null && daysB === null) return 0
+          if (daysA === null) return 1
+          if (daysB === null) return -1
+          return daysA - daysB
+        }
         return 0
       })
-  }, [players, activePosition, filterOnlyProvisorio, search, levelFilter, projecaoFilter, alertFilter, altMin, altMax, anoDe, anoAte, sortOrder])
+  }, [players, activePosition, filterOnlyProvisorio, search, levelFilter, projecaoFilter, alertFilter, altMin, altMax, anoDe, anoAte, sortOrder, contractWindowFilter, quickPosFilter, quickTierFilter])
 
   const getNivelStyle = (nivel) => {
     switch (nivel) {
@@ -442,29 +540,9 @@ export default function PlayerList({
     )
   }
 
-  // Calcula dias até a data do contrato (formato DD/MM/YYYY)
-  const getDaysToContractExpiry = (contratoStr) => {
-    if (!contratoStr || contratoStr === '—') return null
-    const parts = contratoStr.split('/')
-    if (parts.length !== 3) return null
-    const day = parseInt(parts[0], 10)
-    const month = parseInt(parts[1], 10) - 1
-    const year = parseInt(parts[2], 10)
-    if (isNaN(day) || isNaN(month) || isNaN(year)) return null
-    const contractDate = new Date(year, month, day)
-    // Usar data atual
-    const today = new Date()
-    const diffTime = contractDate - today
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24))
-    return diffDays
-  }
-
   const getContratoStyle = (contratoStr) => {
-    const days = getDaysToContractExpiry(contratoStr)
-    if (days === null) return 'text-slate-500 font-normal'
-    if (days < 180) return 'text-rose-500 font-semibold'
-    if (days <= 365) return 'text-amber-400 font-semibold'
-    return 'text-emerald-400 font-semibold'
+    const status = getContractStatus(contratoStr)
+    return status.textClass
   }
 
   return (
@@ -592,7 +670,166 @@ export default function PlayerList({
       </nav>
 
       {/* 3. BARRA SUPERIOR DE FILTROS E AÇÕES */}
-      <div className="max-w-[1720px] mx-auto px-3 py-3 md:px-6 md:pt-5 md:pb-3">
+      <div className="max-w-[1720px] mx-auto px-3 py-3 md:px-6 md:pt-5 md:pb-3 space-y-3">
+        {/* RADAR DE FIM DE CONTRATO (JANELA DE 180 DIAS / PRÉ-CONTRATO) */}
+        <div className="bg-[#0b121e] border border-slate-800/90 rounded-xl p-3 md:p-4 shadow-lg">
+          {/* Linha Superior: Cabeçalho & Switcher de Urgência */}
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 pb-3 border-b border-slate-800/80">
+            {/* Título & Badge de Status */}
+            <div className="flex items-center gap-2.5">
+              <div className="w-8 h-8 rounded-lg bg-rose-500/10 border border-rose-500/30 flex items-center justify-center text-rose-400 shrink-0">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h3 className="text-xs md:text-sm font-bold text-white tracking-wide">
+                    {activePosition === 'radar-contratos' || activePosition === 'vencendo'
+                      ? 'Radar de Fim de Contrato • Monitoramento Oficial'
+                      : 'Radar de Fim de Contrato (Janela de 180 Dias / Pré-Contrato)'}
+                  </h3>
+                  <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                    Janela Pré-Contrato
+                  </span>
+                </div>
+                <p className="text-[11px] text-slate-400">
+                  Alertas de vínculo: Críticos (≤ 90 dias), Janela Ativa (91–180 dias) e contratos já expirados.
+                </p>
+              </div>
+            </div>
+
+            {/* Switcher de Vencimento com Contadores Dinâmicos */}
+            <div className="flex flex-wrap items-center gap-1.5 p-1 bg-[#080d16] rounded-lg border border-slate-800/90 text-xs">
+              <button
+                type="button"
+                onClick={() => setContractWindowFilter('ALL')}
+                className={`px-3 py-1.5 rounded-md font-semibold transition-all cursor-pointer flex items-center gap-1.5 text-xs ${
+                  contractWindowFilter === 'ALL'
+                    ? 'bg-slate-700 text-white shadow-xs'
+                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60'
+                }`}
+              >
+                <span>Todos</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] font-bold text-slate-300">
+                  {contractCounts.total}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setContractWindowFilter('PRE_CONTRACT_180')}
+                className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer flex items-center gap-1.5 text-xs ${
+                  contractWindowFilter === 'PRE_CONTRACT_180'
+                    ? 'bg-amber-500/25 text-amber-200 border border-amber-500/70 shadow-sm'
+                    : 'text-amber-300/80 hover:text-amber-200 hover:bg-amber-500/10'
+                }`}
+              >
+                <span>🚨 Pré-Contrato (≤ 180d)</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-amber-500/30 text-[10px] font-extrabold text-amber-200">
+                  {contractCounts.preContract}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setContractWindowFilter('CRITICAL_90')}
+                className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer flex items-center gap-1.5 text-xs ${
+                  contractWindowFilter === 'CRITICAL_90'
+                    ? 'bg-rose-500/25 text-rose-200 border border-rose-500/70 shadow-sm animate-pulse'
+                    : 'text-rose-400/80 hover:text-rose-200 hover:bg-rose-500/10'
+                }`}
+              >
+                <span>Críticos (≤ 90d)</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-rose-500/30 text-[10px] font-extrabold text-rose-200">
+                  {contractCounts.critical}
+                </span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setContractWindowFilter('EXPIRED')}
+                className={`px-3 py-1.5 rounded-md font-bold transition-all cursor-pointer flex items-center gap-1.5 text-xs ${
+                  contractWindowFilter === 'EXPIRED'
+                    ? 'bg-rose-950 text-rose-300 border border-rose-600 shadow-sm'
+                    : 'text-slate-400 hover:text-rose-300 hover:bg-rose-950/40'
+                }`}
+              >
+                <span>⚠️ Expirados</span>
+                <span className="px-1.5 py-0.2 rounded-full bg-slate-800 text-[10px] font-bold text-rose-300">
+                  {contractCounts.expired}
+                </span>
+              </button>
+            </div>
+          </div>
+
+          {/* Linha Inferior: Filtros Rápidos (Posição Prioritária & Tiers) */}
+          <div className="pt-2.5 flex flex-wrap items-center justify-between gap-3 text-xs">
+            {/* Filtro Rápido por Posição Prioritária (GOL, ZAG, LAT, VOL, MEI, ATA) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
+                <Shield className="w-3 h-3 text-emerald-400" />
+                Posição:
+              </span>
+              {PRIORITY_POSITION_GROUPS.map((posGroup) => {
+                const isSel = quickPosFilter === posGroup.id
+                return (
+                  <button
+                    key={posGroup.id}
+                    type="button"
+                    onClick={() => setQuickPosFilter(posGroup.id)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-semibold transition-all cursor-pointer ${
+                      isSel
+                        ? 'bg-emerald-500/25 text-emerald-300 border border-emerald-500/60 shadow-xs'
+                        : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50'
+                    }`}
+                  >
+                    {posGroup.shortLabel}
+                  </button>
+                )
+              })}
+            </div>
+
+            {/* Filtro Rápido por Tier (A+, A, B+, B, C) */}
+            <div className="flex flex-wrap items-center gap-1.5">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 mr-1 flex items-center gap-1">
+                <Sparkles className="w-3 h-3 text-amber-400" />
+                Tier:
+              </span>
+              {QUICK_TIERS.map((tier) => {
+                const isSel = quickTierFilter === tier
+                return (
+                  <button
+                    key={tier}
+                    type="button"
+                    onClick={() => setQuickTierFilter(tier)}
+                    className={`px-2.5 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                      isSel
+                        ? 'bg-blue-600/30 text-sky-200 border border-blue-500/60 shadow-xs'
+                        : 'bg-slate-800/60 text-slate-400 hover:text-slate-200 hover:bg-slate-800 border border-slate-700/50'
+                    }`}
+                  >
+                    {tier === 'ALL' ? 'Todos' : tier}
+                  </button>
+                )
+              })}
+
+              {/* Botão Limpar Filtros do Radar */}
+              {(contractWindowFilter !== 'ALL' || quickPosFilter !== 'ALL' || quickTierFilter !== 'ALL') && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setContractWindowFilter('ALL')
+                    setQuickPosFilter('ALL')
+                    setQuickTierFilter('ALL')
+                  }}
+                  className="ml-1 text-[11px] text-slate-400 hover:text-white underline transition cursor-pointer"
+                >
+                  Limpar filtros do radar
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+
         <div className="bg-[#0f172a] border border-slate-800 rounded-xl p-3 flex flex-wrap items-center justify-between gap-3 shadow-md">
           {/* Lado Esquerdo: Filtros */}
           <div className="flex flex-wrap items-center gap-2.5 text-xs">
@@ -853,7 +1090,8 @@ export default function PlayerList({
 
                     const isExpiring = player.alerta === 'VENCENDO'
                     const isExpanded = expandedPlayerId === player.id
-                    const daysToExpiry = getDaysToContractExpiry(player.contrato)
+                    const contractStatus = getContractStatus(player)
+                    const daysToExpiry = contractStatus.days
 
                     return (
                       <React.Fragment key={player.id}>
@@ -977,11 +1215,23 @@ export default function PlayerList({
                             {player.agente || '—'}
                           </td>
 
-                          {/* CONTRATO */}
-                          <td className="py-3.5 px-4 text-center tracking-tight">
-                            <span className={getContratoStyle(player.contrato)}>
-                              {player.contrato || '—'}
-                            </span>
+                          {/* CONTRATO & COUNTDOWN BADGE */}
+                          <td className="py-3 px-3 text-center">
+                            <div className="flex flex-col items-center justify-center gap-1 min-w-[110px]">
+                              <span className="font-mono text-xs text-slate-300 font-semibold tracking-tight">
+                                {player.contrato || player.contract_end || player.contract_until || '—'}
+                              </span>
+                              {contractStatus.days !== null ? (
+                                <span
+                                  className={`inline-flex items-center gap-1 text-[10px] px-2.5 py-0.5 rounded-full border transition-all ${contractStatus.badgeClass}`}
+                                  title={contractStatus.fullLabel}
+                                >
+                                  {contractStatus.label}
+                                </span>
+                              ) : (
+                                <span className="text-[10px] text-slate-500 italic">Indefinido</span>
+                              )}
+                            </div>
                           </td>
 
                           {/* AÇÕES */}
@@ -1058,22 +1308,17 @@ export default function PlayerList({
                                       </div>
                                     </div>
 
-                                    {/* Dias p/ Vencimento */}
+                                    {/* Status do Contrato / Dias p/ Vencimento */}
                                     {daysToExpiry !== null && (
-                                      <div className="flex items-center gap-1.5 ml-auto sm:ml-0 bg-[#111c30] px-3 py-1 rounded-lg border border-slate-700/60 shadow-sm">
+                                      <div className="flex flex-wrap items-center gap-2 ml-auto sm:ml-0 bg-[#111c30] px-3 py-1.5 rounded-lg border border-slate-700/60 shadow-sm">
                                         <span className="text-[11px] font-bold uppercase tracking-wider text-slate-300">
-                                          Dias p/ Vencimento:
+                                          Status do Contrato:
                                         </span>
-                                        <span
-                                          className={`text-xs font-black ${
-                                            daysToExpiry <= 180
-                                              ? 'text-rose-400'
-                                              : daysToExpiry <= 365
-                                              ? 'text-amber-400'
-                                              : 'text-emerald-400'
-                                          }`}
-                                        >
-                                          {daysToExpiry > 0 ? `${daysToExpiry} dias` : 'Vencido'}
+                                        <span className={`text-xs font-black px-2.5 py-0.5 rounded-full border ${contractStatus.badgeClass}`}>
+                                          {contractStatus.label}
+                                        </span>
+                                        <span className="text-[11px] text-slate-400">
+                                          ({contractStatus.days > 0 ? `${contractStatus.days} dias restantes` : contractStatus.days === 0 ? 'expira hoje' : `expirado há ${Math.abs(contractStatus.days)} dias`})
                                         </span>
                                       </div>
                                     )}

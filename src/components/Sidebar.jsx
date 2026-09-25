@@ -21,9 +21,11 @@ import {
   UserCheck,
   Calendar,
   Trophy,
-  GraduationCap
+  GraduationCap,
+  AlertTriangle
 } from 'lucide-react'
 import { SCOUT_CONFIG } from '../constants/scoutConfig'
+import { getContractStatus } from '../utils/contractUtils'
 
 const iconMap = {
   Shield,
@@ -43,7 +45,8 @@ const iconMap = {
   UserCheck,
   Calendar,
   Trophy,
-  GraduationCap
+  GraduationCap,
+  AlertTriangle
 }
 
 export default function Sidebar({
@@ -62,7 +65,17 @@ export default function Sidebar({
     let count = 0
     let alertCount = 0
 
-    if (itemId === 'radar-sub23') {
+    if (itemId === 'radar-contratos' || itemId === 'vencendo') {
+      const list = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isPreContract || s.isExpired
+      })
+      count = list.length
+      alertCount = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isCritical || s.isExpired
+      }).length
+    } else if (itemId === 'radar-sub23') {
       const list = players.filter(p => p.radarSub23)
       count = list.length
       alertCount = list.filter(p => p.alerta === 'VENCENDO').length

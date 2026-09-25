@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { SCOUT_CONFIG } from '../constants/scoutConfig'
 import UserBadge from './UserBadge'
+import { getContractStatus } from '../utils/contractUtils'
 
 const iconMap = {
   Shield,
@@ -74,14 +75,27 @@ export default function Dashboard({
 
   // Dynamic statistics
   const totalAthletes = players.length
-  const expiringContractsCount = players.filter(p => p.alerta === 'VENCENDO').length
+  const expiringContractsCount = players.filter(p => {
+    const s = getContractStatus(p)
+    return s.isPreContract || s.isExpired
+  }).length
 
   // Counts by item id (positions & follow-ups)
   const getItemStats = (itemId) => {
     let count = 0
     let alertCount = 0
 
-    if (itemId === 'radar-sub23') {
+    if (itemId === 'radar-contratos' || itemId === 'vencendo') {
+      const list = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isPreContract || s.isExpired
+      })
+      count = list.length
+      alertCount = players.filter(p => {
+        const s = getContractStatus(p)
+        return s.isCritical || s.isExpired
+      }).length
+    } else if (itemId === 'radar-sub23') {
       const list = players.filter(p => p.radarSub23)
       count = list.length
       alertCount = list.filter(p => p.alerta === 'VENCENDO').length
@@ -283,7 +297,7 @@ export default function Dashboard({
           </div>
 
           <div
-            onClick={() => handleTabChange('vencendo')}
+            onClick={() => handleTabChange('radar-contratos')}
             className="bg-[#0f172a] border border-rose-900/40 rounded-xl p-4 flex items-center justify-between max-w-xs relative overflow-hidden group hover:border-rose-700/60 transition-colors shadow-lg shadow-rose-950/20 cursor-pointer"
           >
             <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>

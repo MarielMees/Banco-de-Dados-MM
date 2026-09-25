@@ -33,6 +33,7 @@ export const SCOUT_CONFIG = {
       id: "acompanhamento",
       label: "ACOMPANHAMENTO",
       items: [
+        { id: "radar-contratos", label: "Radar de Contratos (≤ 180d)", count: 0, alertCount: 0, icon: "AlertTriangle" },
         { id: "radar-sub23", label: "Radar Sub-23", count: 45, alertCount: 6, icon: "Telescope" },
         { id: "monitoramento", label: "Monitoramento", count: 2, alertCount: 0, icon: "Search" },
         { id: "hot-list", label: "Hot List", count: 8, alertCount: 0, icon: "Flame" },
@@ -67,6 +68,7 @@ export const SCOUT_CONFIG = {
     { id: "meia-ofensivo", label: "Meia Ofensivo", count: 26, alertCount: 6, icon: "Sparkles", activeBarColor: "bg-pink-500" },
     { id: "extremo", label: "Extremo", count: 56, alertCount: 13, icon: "Zap", activeBarColor: "bg-amber-500" },
     { id: "centroavante", label: "Centroavante", count: 45, alertCount: 8, icon: "Target", activeBarColor: "bg-indigo-500" },
+    { id: "radar-contratos", label: "Radar de Contratos", count: 0, alertCount: 0, icon: "AlertTriangle", activeBarColor: "bg-rose-500" },
     { id: "radar-sub23", label: "Radar Sub-23", count: 45, alertCount: 6, icon: "Telescope", activeBarColor: "bg-purple-600" },
     { id: "monitoramento", label: "Monitoramento", count: 2, alertCount: 0, icon: "Search", activeBarColor: "bg-emerald-500" },
     { id: "hot-list", label: "Hot List", count: 8, alertCount: 0, icon: "Flame", activeBarColor: "bg-rose-500" },
@@ -88,6 +90,6 @@ export const SCOUT_CONFIG = {
   quickShortcuts: [
     { id: "hot-list", label: "Ver Hot List", icon: "Flame", variant: "danger" },
     { id: "monitoramento", label: "Ver Monitoramento", icon: "Search", variant: "primary" },
-    { id: "vencendo", label: "Ver Contratos Vencendo", icon: "AlertTriangle", variant: "warning" }
+    { id: "radar-contratos", label: "Ver Radar de Contratos (≤ 180d)", icon: "AlertTriangle", variant: "warning" }
   ]
 };
