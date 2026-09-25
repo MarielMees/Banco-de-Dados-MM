@@ -264,3 +264,61 @@ export const formatSalaryDiff = (diff) => {
     colorClass: 'text-rose-300 bg-rose-500/25 border-rose-500/50 shadow-sm shadow-rose-500/10'
   }
 }
+
+/**
+ * Calcula métricas salariais consolidadas para uma vaga/posição do campograma:
+ * - Custo do titular ativo
+ * - Custo dos suplentes/reservas
+ * - Custo total da posição
+ * - Média salarial ponderada da posição (soma dos salários / atletas com salário)
+ * - Indicador de inversão salarial (caso a 2ª opção ganhe estritamente mais que o 1º titular)
+ */
+export const calculatePositionSalaryMetrics = (positionSlots = [], playersList = []) => {
+  if (!positionSlots || positionSlots.length === 0) {
+    return {
+      titularSalary: 0,
+      reservasSalary: 0,
+      totalSalary: 0,
+      avgSalary: 0,
+      countWithSalary: 0,
+      hasSalaryInversion: false,
+      secondSalary: 0,
+      optionsCount: 0
+    }
+  }
+
+  const titular = positionSlots[0] || null
+  const alternates = positionSlots.slice(1)
+  const titularSalary = titular ? getAthleteSalary(titular, playersList) : 0
+
+  let reservasSalary = 0
+  let countWithSalary = titular && titularSalary > 0 ? 1 : 0
+  let totalSalary = titularSalary
+
+  alternates.forEach((alt) => {
+    if (!alt) return
+    const sal = getAthleteSalary(alt, playersList)
+    reservasSalary += sal
+    totalSalary += sal
+    if (sal > 0) countWithSalary += 1
+  })
+
+  // Se houver apenas 1 atleta com salário, exibe o valor dele; se 2 ou mais, divide pelo número de atletas preenchidos com salário
+  const avgSalary = countWithSalary > 0 ? Math.round(totalSalary / countWithSalary) : (totalSalary > 0 ? totalSalary : 0)
+
+  // Inversão salarial: a 2ª opção cadastrada (1º suplente direto) possui salário estritamente superior ao titular ativo
+  const secondSalary = alternates.length > 0 && alternates[0] ? getAthleteSalary(alternates[0], playersList) : 0
+  const hasSalaryInversion = titularSalary > 0 && secondSalary > titularSalary
+
+  return {
+    titularSalary,
+    reservasSalary,
+    totalSalary,
+    avgSalary,
+    countWithSalary,
+    hasSalaryInversion,
+    secondSalary,
+    optionsCount: positionSlots.length
+  }
+}
+

@@ -32,6 +32,7 @@ import {
   getAthleteSalary,
   isAthleteSalaryCustom,
   calculateTeamPayroll,
+  calculatePositionSalaryMetrics,
   formatSalaryDiff,
   getDefaultEstimatedSalary,
   DEFAULT_TIER_SALARIES
@@ -971,6 +972,370 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       // Estampa o campograma sem cortes
       pdf.addImage(dataUrl, 'PNG', 0, headerHeight, img.width, img.height)
 
+      // Rodapé da Página 1
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(11)
+      pdf.text('Página 1 de 2  |  Campograma Tático', pdfWidth - 260, pdfHeight - 14)
+
+      // ==========================================
+      // PÁGINA 2: DIAGNÓSTICO FINANCEIRO & SALARIAL
+      // ==========================================
+      pdf.addPage([pdfWidth, pdfHeight], pdfWidth > pdfHeight ? 'landscape' : 'portrait')
+
+      // Fator de escala dinâmico proporcional à resolução da imagem (base de referência: 1400px de largura)
+      const scale = pdfWidth / 1400
+      const s = (v) => Math.round(v * scale)
+      const font = (sz) => Math.max(7, Math.round(sz * scale))
+
+      // 1. Fundo Dark da Página 2 (#070b12)
+      pdf.setFillColor(7, 11, 18)
+      pdf.rect(0, 0, pdfWidth, pdfHeight, 'F')
+
+      // Faixa Superior em Esmeralda (#10b981)
+      pdf.setFillColor(16, 185, 129)
+      pdf.rect(0, 0, pdfWidth, Math.max(3, s(4)), 'F')
+
+      // 2. Cabeçalho Institucional de Diagnóstico Financeiro
+      const headY = s(38)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(font(20))
+      pdf.text(`RELATÓRIO FINANCEIRO & DIAGNÓSTICO SALARIAL — ${cleanName.toUpperCase()}`, s(40), headY)
+
+      const budgetCeiling = activeTeam?.budget_ceiling || 2000000
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(font(11))
+      const nowStr = new Date().toLocaleDateString('pt-BR')
+      pdf.text(
+        `Esquema: ${selectedFormation}   |   Teto Aprovado: ${formatBRL(budgetCeiling, false)}   |   Base: 11 Titulares + Suplentes   |   Data: ${nowStr}`,
+        s(40),
+        headY + s(18)
+      )
+
+      // 3. Coleta de dados financeiros detalhados por posição
+      const positionsList = activeFormation.positions
+      const posFinancials = positionsList.map((pos) => {
+        const slots = slotsData[pos.id] || []
+        const titular = slots[0] || null
+        const alternates = slots.slice(1)
+        const metrics = calculatePositionSalaryMetrics(slots, players)
+
+        return {
+          id: pos.id,
+          label: pos.label,
+          titular,
+          alternates,
+          titularSalary: metrics.titularSalary,
+          reservasSalary: metrics.reservasSalary,
+          totalPosSalary: metrics.totalSalary,
+          avgSalary: metrics.avgSalary,
+          countWithSalary: metrics.countWithSalary,
+          hasSalaryInversion: metrics.hasSalaryInversion,
+          secondSalary: metrics.secondSalary,
+          optionsCount: slots.length
+        }
+      })
+
+      const totalTitularesCost = posFinancials.reduce((sum, p) => sum + p.titularSalary, 0)
+      const totalReservasCost = posFinancials.reduce((sum, p) => sum + p.reservasSalary, 0)
+      const totalSquadCost = totalTitularesCost + totalReservasCost
+      const startersCount = posFinancials.filter((p) => p.titular !== null).length
+      const totalPlayersCount = posFinancials.reduce((sum, p) => sum + p.optionsCount, 0)
+      const saldoTitulares = budgetCeiling - totalTitularesCost
+      const pctTetoTitulares = budgetCeiling > 0 ? Math.round((totalTitularesCost / budgetCeiling) * 100) : 0
+      const pctTetoSquad = budgetCeiling > 0 ? Math.round((totalSquadCost / budgetCeiling) * 100) : 0
+
+      // 4. Quatro Cards Executivos de Resumo Financeiro
+      const cardsY = headY + s(32)
+      const cardsH = s(70)
+      const totalCardsW = pdfWidth - s(80)
+      const gapCards = s(16)
+      const cardW = Math.floor((totalCardsW - gapCards * 3) / 4)
+
+      const summaryCards = [
+        {
+          label: 'TETO SALARIAL MENSAL',
+          value: formatBRL(budgetCeiling, false),
+          subtext: 'Limite orçamentário aprovado',
+          borderColor: [51, 65, 85],
+          valColor: [255, 255, 255],
+          lblColor: [148, 163, 184]
+        },
+        {
+          label: 'FOLHA 11 TITULARES',
+          value: formatBRL(totalTitularesCost, false),
+          subtext: `${pctTetoTitulares}% do teto (${startersCount}/11 titulares)`,
+          borderColor: [16, 185, 129],
+          valColor: [52, 211, 153],
+          lblColor: [110, 231, 183]
+        },
+        {
+          label: 'FOLHA ELENCO COMPLETO',
+          value: formatBRL(totalSquadCost, false),
+          subtext: `${pctTetoSquad}% do teto (${totalPlayersCount} atletas no elenco)`,
+          borderColor: [245, 158, 11],
+          valColor: [251, 191, 36],
+          lblColor: [252, 211, 77]
+        },
+        {
+          label: 'SALDO ORÇAMENTÁRIO',
+          value: `${saldoTitulares >= 0 ? '+' : ''}${formatBRL(saldoTitulares, false)}`,
+          subtext: saldoTitulares >= 0 ? 'Margem disponível p/ reforços' : 'Orçamento excedente',
+          borderColor: saldoTitulares >= 0 ? [16, 185, 129] : [244, 63, 94],
+          valColor: saldoTitulares >= 0 ? [52, 211, 153] : [251, 113, 133],
+          lblColor: saldoTitulares >= 0 ? [110, 231, 183] : [253, 164, 175]
+        }
+      ]
+
+      summaryCards.forEach((c, idx) => {
+        const cx = s(40) + idx * (cardW + gapCards)
+        pdf.setFillColor(13, 21, 36)
+        pdf.setDrawColor(c.borderColor[0], c.borderColor[1], c.borderColor[2])
+        pdf.setLineWidth(1)
+        pdf.roundedRect(cx, cardsY, cardW, cardsH, s(6), s(6), 'FD')
+
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(c.lblColor[0], c.lblColor[1], c.lblColor[2])
+        pdf.setFontSize(font(8.5))
+        pdf.text(c.label, cx + s(14), cardsY + s(18))
+
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(c.valColor[0], c.valColor[1], c.valColor[2])
+        pdf.setFontSize(font(15))
+        pdf.text(c.value, cx + s(14), cardsY + s(40))
+
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(148, 163, 184)
+        pdf.setFontSize(font(8))
+        pdf.text(c.subtext, cx + s(14), cardsY + s(58))
+      })
+
+      // 5. Painéis: Gráfico de Barras (Esquerda) e Tabela Analítica (Direita)
+      const footerAreaH = s(36)
+      const panelsY = cardsY + cardsH + s(18)
+      const availablePanelH = pdfHeight - panelsY - footerAreaH
+      const panelGap = s(20)
+      const totalPanelsW = pdfWidth - s(80)
+      const panelW = Math.floor((totalPanelsW - panelGap) / 2)
+
+      const panel1X = s(40)
+      const panel2X = panel1X + panelW + panelGap
+
+      // --- PAINEL 1: GRÁFICO DE BARRAS POR POSIÇÃO ---
+      pdf.setFillColor(11, 18, 30)
+      pdf.setDrawColor(30, 41, 59)
+      pdf.setLineWidth(1)
+      pdf.roundedRect(panel1X, panelsY, panelW, availablePanelH, s(6), s(6), 'FD')
+
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(font(12))
+      pdf.text('DISTRIBUIÇÃO DA FOLHA POR POSIÇÃO', panel1X + s(16), panelsY + s(20))
+
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(font(8.5))
+      pdf.text('Custo segmentado: Titular (Verde) vs Suplentes/Reservas (Âmbar)', panel1X + s(16), panelsY + s(32))
+
+      const maxPosCost = Math.max(...posFinancials.map((p) => p.totalPosSalary), budgetCeiling * 0.2, 100000)
+      const usableChartH = availablePanelH - s(64)
+      const rowH = Math.floor(usableChartH / 11)
+
+      posFinancials.forEach((p, i) => {
+        const rowY = panelsY + s(40) + i * rowH
+
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(203, 213, 225)
+        pdf.setFontSize(font(8.5))
+        const labelStr = p.label.length > 15 ? p.label.slice(0, 14) + '.' : p.label
+        pdf.text(labelStr, panel1X + s(16), rowY + s(12))
+
+        const barStartX = panel1X + s(130)
+        const barMaxW = panelW - s(130) - s(110)
+        const barH = Math.max(6, Math.min(s(12), Math.floor(rowH * 0.55)))
+        const barY = rowY + Math.floor((rowH - barH) / 2)
+
+        // Trilho de fundo
+        pdf.setFillColor(18, 28, 45)
+        pdf.roundedRect(barStartX, barY, barMaxW, barH, s(2), s(2), 'F')
+
+        // Segmento Titular (Verde)
+        const titW = Math.round((p.titularSalary / maxPosCost) * barMaxW)
+        if (titW > 0) {
+          pdf.setFillColor(16, 185, 129)
+          pdf.rect(barStartX, barY, Math.min(titW, barMaxW), barH, 'F')
+        }
+
+        // Segmento Reservas (Âmbar)
+        const resW = Math.round((p.reservasSalary / maxPosCost) * barMaxW)
+        if (resW > 0) {
+          pdf.setFillColor(245, 158, 11)
+          const resX = barStartX + titW
+          const clampedResW = Math.min(resW, Math.max(0, barMaxW - titW))
+          if (clampedResW > 0) pdf.rect(resX, barY, clampedResW, barH, 'F')
+        }
+
+        // Valor total no final da barra
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(226, 232, 240)
+        pdf.setFontSize(font(8))
+        const totalText = p.totalPosSalary > 0 ? formatCompactBRL(p.totalPosSalary) : '—'
+        pdf.text(totalText, barStartX + titW + resW + s(6), barY + barH - s(2))
+
+        // Alerta de inversão
+        if (p.hasSalaryInversion) {
+          pdf.setFont('helvetica', 'bold')
+          pdf.setTextColor(245, 158, 11)
+          pdf.setFontSize(font(7.5))
+          pdf.text('(!)', barStartX + barMaxW + s(60), barY + barH - s(2))
+        }
+      })
+
+      // Legenda do Gráfico
+      const legendY = panelsY + availablePanelH - s(12)
+      pdf.setFillColor(16, 185, 129)
+      pdf.rect(panel1X + s(16), legendY - s(7), s(8), s(8), 'F')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setFontSize(font(8))
+      pdf.text('Titular Ativo', panel1X + s(28), legendY)
+
+      pdf.setFillColor(245, 158, 11)
+      pdf.rect(panel1X + s(95), legendY - s(7), s(8), s(8), 'F')
+      pdf.text('Reservas / Suplentes', panel1X + s(107), legendY)
+
+      pdf.setTextColor(245, 158, 11)
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('(!) Inversão (Reserva > Titular)', panel1X + s(215), legendY)
+
+      // --- PAINEL 2: TABELA ANALÍTICA POR POSIÇÃO ---
+      pdf.setFillColor(11, 18, 30)
+      pdf.setDrawColor(30, 41, 59)
+      pdf.setLineWidth(1)
+      pdf.roundedRect(panel2X, panelsY, panelW, availablePanelH, s(6), s(6), 'FD')
+
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(255, 255, 255)
+      pdf.setFontSize(font(12))
+      pdf.text('TABELA ANALÍTICA POR POSIÇÃO', panel2X + s(16), panelsY + s(20))
+
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(font(8.5))
+      pdf.text('Detalhamento nominal, média ponderada e impacto no orçamento', panel2X + s(16), panelsY + s(32))
+
+      // Colunas da Tabela
+      const cX0 = panel2X + s(16)
+      const cX1 = cX0 + s(90)
+      const cX2 = cX1 + s(130)
+      const cX3 = cX2 + s(80)
+      const cX4 = cX3 + s(80)
+      const cX5 = cX4 + s(80)
+
+      const tableHeaderY = panelsY + s(40)
+      const tableHeaderH = s(18)
+      pdf.setFillColor(18, 28, 45)
+      pdf.rect(panel2X + s(12), tableHeaderY, panelW - s(24), tableHeaderH, 'F')
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(font(8))
+      pdf.text('POSIÇÃO', cX0, tableHeaderY + s(12))
+      pdf.text('TITULAR ATIVO', cX1, tableHeaderY + s(12))
+      pdf.text('CUSTO TIT.', cX2, tableHeaderY + s(12))
+      pdf.text('RESERVAS', cX3, tableHeaderY + s(12))
+      pdf.text('MÉDIA VAGA', cX4, tableHeaderY + s(12))
+      pdf.text('% TETO', cX5, tableHeaderY + s(12))
+
+      const tableBodyStartY = tableHeaderY + tableHeaderH + s(2)
+      const tableRowH = Math.floor((availablePanelH - s(65)) / 12)
+
+      posFinancials.forEach((p, idx) => {
+        const rowY = tableBodyStartY + idx * tableRowH
+
+        if (idx % 2 === 1) {
+          pdf.setFillColor(15, 23, 38)
+          pdf.rect(panel2X + s(12), rowY, panelW - s(24), tableRowH, 'F')
+        }
+
+        if (p.hasSalaryInversion) {
+          pdf.setFillColor(45, 30, 10)
+          pdf.rect(panel2X + s(12), rowY, panelW - s(24), tableRowH, 'F')
+          pdf.setDrawColor(245, 158, 11)
+          pdf.setLineWidth(1)
+          pdf.line(panel2X + s(12), rowY, panel2X + s(12), rowY + tableRowH)
+        }
+
+        // Posição
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(226, 232, 240)
+        pdf.setFontSize(font(8))
+        pdf.text(p.label.length > 13 ? p.label.slice(0, 12) + '.' : p.label, cX0, rowY + s(11))
+
+        // Titular
+        pdf.setFont('helvetica', 'normal')
+        const titName = p.titular
+          ? p.titular.nome.length > 18
+            ? p.titular.nome.slice(0, 17) + '.'
+            : p.titular.nome
+          : '— Vago'
+        pdf.setTextColor(p.titular ? 203 : 100, p.titular ? 213 : 116, p.titular ? 225 : 139)
+        pdf.text(titName, cX1, rowY + s(11))
+
+        // Custo Titular
+        pdf.setTextColor(52, 211, 153)
+        pdf.text(p.titularSalary > 0 ? formatCompactBRL(p.titularSalary) : '—', cX2, rowY + s(11))
+
+        // Reservas
+        pdf.setTextColor(251, 191, 36)
+        pdf.text(p.reservasSalary > 0 ? formatCompactBRL(p.reservasSalary) : '—', cX3, rowY + s(11))
+
+        // Média Vaga
+        pdf.setTextColor(203, 213, 225)
+        pdf.text(p.avgSalary > 0 ? formatCompactBRL(p.avgSalary) : '—', cX4, rowY + s(11))
+
+        // % Teto
+        const pctPos = budgetCeiling > 0 ? ((p.totalPosSalary / budgetCeiling) * 100).toFixed(1) : '0.0'
+        pdf.setTextColor(148, 163, 184)
+        pdf.text(`${pctPos}%`, cX5, rowY + s(11))
+      })
+
+      // Linha de Rodapé da Tabela: TOTAL GERAL
+      const totalRowY = tableBodyStartY + 11 * tableRowH + s(2)
+      pdf.setFillColor(10, 35, 26)
+      pdf.setDrawColor(16, 185, 129)
+      pdf.setLineWidth(1)
+      pdf.rect(panel2X + s(12), totalRowY, panelW - s(24), tableRowH + s(2), 'FD')
+
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(font(8.5))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text('TOTAL GERAL', cX0, totalRowY + s(12))
+      pdf.text(`${startersCount}/11 Titulares`, cX1, totalRowY + s(12))
+      pdf.text(formatCompactBRL(totalTitularesCost), cX2, totalRowY + s(12))
+      pdf.setTextColor(251, 191, 36)
+      pdf.text(formatCompactBRL(totalReservasCost), cX3, totalRowY + s(12))
+      pdf.setTextColor(255, 255, 255)
+      pdf.text(formatCompactBRL(totalSquadCost), cX4, totalRowY + s(12))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text(`${pctTetoSquad}%`, cX5, totalRowY + s(12))
+
+      // 6. Rodapé Confidencial da Página 2
+      const footerY = pdfHeight - s(14)
+      pdf.setFont('helvetica', 'normal')
+      pdf.setTextColor(100, 116, 139)
+      pdf.setFontSize(font(8.5))
+      pdf.text('DOCUMENTO CONFIDENCIAL — DEPARTAMENTO DE INTELIGÊNCIA & SCOUT', s(40), footerY)
+      const userTag = user?.email || 'Sistema'
+      pdf.text(
+        `Extração: ${new Date().toLocaleString('pt-BR')}   |   Operador: ${userTag}`,
+        pdfWidth / 2 - s(120),
+        footerY
+      )
+      pdf.setFont('helvetica', 'bold')
+      pdf.text('Página 2 de 2', pdfWidth - s(100), footerY)
+
       // Download imediato
       const safeFileName = cleanName.replace(/\s+/g, '_') || 'cenario'
       const fileDate = new Date().toISOString().slice(0, 10)
@@ -1547,6 +1912,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
             const posCoords = customPositions[pos.id] || { top: `${pos.top}%`, left: `${pos.left}%` }
             const isBeingMoved = draggingPosId === pos.id
             const recentImpact = positionImpacts[pos.id]
+            const posSalaryMetrics = calculatePositionSalaryMetrics(currentSlots, players)
 
             return (
               <div
@@ -1894,6 +2260,53 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                       </div>
                     )}
                   </div>
+
+                  {/* Rodapé Compacto do Nó: Média de Custo da Posição + Alerta de Inversão */}
+                  {currentSlots.length > 0 && (
+                    <div
+                      className={`mt-2 pt-1.5 border-t flex items-center justify-between text-[8.5px] transition-colors ${
+                        posSalaryMetrics.hasSalaryInversion
+                          ? 'border-amber-500/40 bg-amber-500/10 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl'
+                          : 'border-slate-800/80 bg-slate-950/60 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl'
+                      }`}
+                    >
+                      <div
+                        className="flex items-center gap-1 text-slate-400 truncate min-w-0"
+                        title={
+                          posSalaryMetrics.countWithSalary > 0
+                            ? `Média de custo da posição: ${formatBRL(posSalaryMetrics.avgSalary, false)}/mês (${posSalaryMetrics.countWithSalary} ${
+                                posSalaryMetrics.countWithSalary === 1 ? 'atleta com salário' : 'atletas com salário'
+                              })`
+                            : 'Nenhum salário cadastrado nesta posição'
+                        }
+                      >
+                        <span className="text-slate-500 font-medium">Média:</span>
+                        <span className="font-bold text-slate-200">
+                          {posSalaryMetrics.countWithSalary > 0
+                            ? `${formatBRL(posSalaryMetrics.avgSalary, false)}/mês`
+                            : '—'}
+                        </span>
+                        {posSalaryMetrics.countWithSalary > 1 && (
+                          <span className="text-[7.5px] text-slate-500">
+                            ({posSalaryMetrics.countWithSalary} opc)
+                          </span>
+                        )}
+                      </div>
+
+                      {posSalaryMetrics.hasSalaryInversion && (
+                        <div
+                          className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-500/25 text-amber-300 border border-amber-500/60 font-black text-[7.5px] shrink-0 animate-pulse ml-1"
+                          title={`⚠️ Alerta de Inversão Salarial: A 2ª opção (${formatCompactBRL(
+                            posSalaryMetrics.secondSalary
+                          )}) possui custo superior ao titular ativo (${formatCompactBRL(
+                            posSalaryMetrics.titularSalary
+                          )})`}
+                        >
+                          <span>⚠️ Reserva &gt; Titular</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 {/* NÓ TÁTICO COMPACTO MOBILE TOUCH (< 768px) */}
@@ -1944,6 +2357,21 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                             <span>{formatCompactBRL(getAthleteSalary(fullTitular, players))}</span>
                             <Pencil className="w-1.5 h-1.5 opacity-60 text-slate-400" />
                           </div>
+
+                          {/* Média de Custo da Posição Mobile & Alerta de Inversão */}
+                          {posSalaryMetrics.countWithSalary > 0 && (
+                            <div
+                              className={`mt-0.5 px-1 py-0.2 rounded text-[7.5px] font-bold flex items-center gap-0.5 shadow transition-colors ${
+                                posSalaryMetrics.hasSalaryInversion
+                                  ? 'bg-amber-950/90 text-amber-300 border border-amber-500/50'
+                                  : 'bg-slate-900/90 text-slate-300 border border-slate-800'
+                              }`}
+                              title={`Média da posição: ${formatBRL(posSalaryMetrics.avgSalary, false)}/mês (${posSalaryMetrics.countWithSalary} com salário)`}
+                            >
+                              <span>Média: {formatCompactBRL(posSalaryMetrics.avgSalary)}</span>
+                              {posSalaryMetrics.hasSalaryInversion && <span className="text-amber-400">⚠️</span>}
+                            </div>
+                          )}
 
                           {/* Seletor rápido de opções em mobile se houver suplentes */}
                           {currentSlots.length > 1 && (
