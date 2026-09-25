@@ -151,29 +151,68 @@ export const isAthleteSalaryCustom = (athlete, playersList = []) => {
 }
 
 /**
- * Calcula a folha projetada atual somando apenas os 11 titulares ativos
+ * Calcula a folha projetada atual com base no escopo:
+ * - 'TITULARES': Soma exclusivamente o atleta ativo/selecionado em cada uma das 11 posições.
+ * - 'COMPLETO': Soma todos os atletas presentes no campograma (1ª, 2ª e 3ª opções) com salário.
  */
-export const calculateTeamPayroll = (formationPositions = [], slotsData = {}, playersList = []) => {
+export const calculateTeamPayroll = (
+  formationPositions = [],
+  slotsData = {},
+  playersList = [],
+  scope = 'TITULARES'
+) => {
   let folhaProjetada = 0
   let startersCount = 0
+  let totalAthletesCount = 0
+  let athletesWithSalaryCount = 0
   let customSalaryCount = 0
   const details = []
 
+  const isFullRoster = scope === 'COMPLETO'
+
   formationPositions.forEach(pos => {
     const list = slotsData[pos.id] || []
-    const titular = list[0]
-    if (titular) {
-      startersCount += 1
-      const salary = getAthleteSalary(titular, playersList)
-      const isCustom = isAthleteSalaryCustom(titular, playersList)
-      if (isCustom) customSalaryCount += 1
-      folhaProjetada += salary
-      details.push({
-        posId: pos.id,
-        posLabel: pos.label,
-        athlete: titular,
-        salary,
-        isCustom
+    if (list.length === 0) return
+
+    if (!isFullRoster) {
+      // Modo Titulares (11)
+      const titular = list[0]
+      if (titular) {
+        startersCount += 1
+        totalAthletesCount += 1
+        const salary = getAthleteSalary(titular, playersList)
+        const isCustom = isAthleteSalaryCustom(titular, playersList)
+        if (isCustom) customSalaryCount += 1
+        if (salary > 0) athletesWithSalaryCount += 1
+        folhaProjetada += salary
+        details.push({
+          posId: pos.id,
+          posLabel: pos.label,
+          athlete: titular,
+          salary,
+          isCustom,
+          optionIndex: 0
+        })
+      }
+    } else {
+      // Modo Elenco Completo (1ª, 2ª e 3ª opções)
+      list.forEach((athlete, index) => {
+        if (!athlete) return
+        totalAthletesCount += 1
+        if (index === 0) startersCount += 1
+        const salary = getAthleteSalary(athlete, playersList)
+        const isCustom = isAthleteSalaryCustom(athlete, playersList)
+        if (isCustom) customSalaryCount += 1
+        if (salary > 0) athletesWithSalaryCount += 1
+        folhaProjetada += salary
+        details.push({
+          posId: pos.id,
+          posLabel: pos.label,
+          athlete,
+          salary,
+          isCustom,
+          optionIndex: index
+        })
       })
     }
   })
@@ -181,8 +220,11 @@ export const calculateTeamPayroll = (formationPositions = [], slotsData = {}, pl
   return {
     folhaProjetada,
     startersCount,
+    totalAthletesCount,
+    athletesWithSalaryCount,
     customSalaryCount,
     totalPositions: formationPositions.length,
+    scope,
     details
   }
 }

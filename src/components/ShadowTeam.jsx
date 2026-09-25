@@ -260,14 +260,17 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const customPositions = activeTeam.customPositions || {}
   const activeFormation = FORMATIONS_CONFIG[selectedFormation] || FORMATIONS_CONFIG['4-3-3']
 
-  // Métricas e Cálculos Financeiros em Tempo Real
+  // Base do cálculo de métricas físicas, etárias e orçamentárias ('TITULARES' | 'COMPLETO')
+  const [metricsScope, setMetricsScope] = useState('TITULARES')
+
+  // Métricas e Cálculos Financeiros em Tempo Real (unificados com metricsScope)
   const budgetCeiling = activeTeam.budget_ceiling !== undefined && activeTeam.budget_ceiling !== null
     ? Number(activeTeam.budget_ceiling)
     : 2500000
 
   const payrollStats = useMemo(() => {
-    return calculateTeamPayroll(activeFormation.positions, slotsData, players)
-  }, [activeFormation, slotsData, players])
+    return calculateTeamPayroll(activeFormation.positions, slotsData, players, metricsScope)
+  }, [activeFormation, slotsData, players, metricsScope])
 
   const folhaProjetada = payrollStats.folhaProjetada
   const saldoOrcamentario = budgetCeiling - folhaProjetada
@@ -295,9 +298,6 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       return team
     }))
   }
-
-  // Base do cálculo de métricas físicas e etárias ('TITULARES' | 'COMPLETO')
-  const [metricsScope, setMetricsScope] = useState('TITULARES')
 
   // Contagem dinâmica de posições preenchidas na formação ativa
   const filledCount = useMemo(() => {
@@ -961,8 +961,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         ? `${teamMetrics.avgHeight} cm (${teamMetrics.countHeight} ${metricsScope === 'TITULARES' ? 'titulares' : 'atletas'})`
         : '—'
 
+      const folhaStr = `${formatBRL(folhaProjetada, false)} (${metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'})`
       pdf.text(
-        `Esquema: ${selectedFormation}   |   Média de Idade: ${idadeStr}   |   Média de Altura: ${alturaStr}`,
+        `Esquema: ${selectedFormation}   |   Idade: ${idadeStr}   |   Altura: ${alturaStr}   |   Folha: ${folhaStr}`,
         40,
         80
       )
@@ -1181,31 +1182,67 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                     tempo real
                   </span>
                 </h2>
-                <p className="text-[10px] text-slate-400">
-                  Projeção financeira baseada exclusivamente nos 11 titulares ativos na formação selecionada
+                <p className="text-[10px] text-slate-400 transition-colors duration-300">
+                  {metricsScope === 'TITULARES'
+                    ? 'Projeção baseada nos 11 titulares ativos na formação selecionada'
+                    : 'Projeção baseada em todos os atletas do elenco (1ª, 2ª e 3ª opções)'}
                 </p>
               </div>
             </div>
 
-            {/* Presets Rápidos de Teto Salarial */}
-            <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
-              <span className="text-[10px] font-bold uppercase text-slate-500 mr-1 hidden sm:inline">
-                Atalhos de Teto:
-              </span>
-              {[1000000, 1500000, 2000000, 2500000, 3000000, 4000000].map((preset) => (
+            {/* Controles do Topo: Base de Cálculo + Presets Rápidos de Teto */}
+            <div className="flex items-center gap-2.5 flex-wrap">
+              {/* Seletor Unificado de Base de Cálculo */}
+              <div className="flex items-center gap-1 bg-[#090e17] p-1 rounded-xl border border-slate-800 text-xs shadow-inner">
+                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-1 hidden sm:inline">
+                  Base:
+                </span>
                 <button
-                  key={preset}
                   type="button"
-                  onClick={() => handleBudgetCeilingChange(preset)}
-                  className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
-                    budgetCeiling === preset
-                      ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm shadow-emerald-500/20'
-                      : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                  onClick={() => setMetricsScope('TITULARES')}
+                  className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    metricsScope === 'TITULARES'
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                   }`}
+                  title="Calcular folha e métricas baseado apenas nos 11 titulares ativos"
                 >
-                  {formatCompactBRL(preset)}
+                  Titulares (11)
                 </button>
-              ))}
+                <button
+                  type="button"
+                  onClick={() => setMetricsScope('COMPLETO')}
+                  className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
+                    metricsScope === 'COMPLETO'
+                      ? 'bg-slate-700 text-white shadow-sm'
+                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
+                  }`}
+                  title="Calcular folha e métricas com todo o elenco (1ª, 2ª e 3ª opções)"
+                >
+                  Elenco Completo
+                </button>
+              </div>
+
+              {/* Presets Rápidos de Teto Salarial */}
+              <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
+                <span className="text-[10px] font-bold uppercase text-slate-500 mr-1 hidden sm:inline">
+                  Atalhos de Teto:
+                </span>
+                {[1000000, 1500000, 2000000, 2500000, 3000000, 4000000].map((preset) => (
+                  <button
+                    key={preset}
+                    type="button"
+                    onClick={() => handleBudgetCeilingChange(preset)}
+                    className={`px-2 py-0.5 rounded text-[10px] font-bold transition-all cursor-pointer border ${
+                      budgetCeiling === preset
+                        ? 'bg-emerald-500 text-slate-950 border-emerald-400 shadow-sm shadow-emerald-500/20'
+                        : 'bg-slate-900/80 hover:bg-slate-800 text-slate-300 border-slate-800 hover:border-slate-700'
+                    }`}
+                  >
+                    {formatCompactBRL(preset)}
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -1275,26 +1312,37 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
                   Folha Projetada Atual
                 </span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30">
-                  {payrollStats.startersCount}/11 titulares
+                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 transition-all duration-300">
+                  {metricsScope === 'TITULARES'
+                    ? `${payrollStats.startersCount}/11 titulares definidos`
+                    : `${payrollStats.totalAthletesCount} atletas no elenco`}
                 </span>
               </div>
 
-              <div className="text-lg md:text-xl font-black text-amber-300 tracking-tight my-0.5">
+              <div
+                key={`folha-${metricsScope}`}
+                className="text-lg md:text-xl font-black text-amber-300 tracking-tight my-0.5 transition-all duration-300 animate-in fade-in"
+              >
                 {formatBRL(folhaProjetada, true)}
               </div>
 
               <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
-                <span>Soma dos 11 titulares</span>
+                <span>
+                  {metricsScope === 'TITULARES'
+                    ? 'Soma dos 11 titulares ativos'
+                    : 'Soma de todo o elenco do campograma'}
+                </span>
                 <span className="text-slate-500 font-medium">
-                  {payrollStats.customSalaryCount} salários definidos
+                  {metricsScope === 'TITULARES'
+                    ? `${payrollStats.customSalaryCount} salários definidos`
+                    : `${payrollStats.athletesWithSalaryCount || payrollStats.totalAthletesCount} atletas com salário definido`}
                 </span>
               </div>
             </div>
 
             {/* Métrica 3: Saldo / Variação */}
             <div
-              className={`border rounded-xl p-3 flex flex-col justify-between shadow-sm transition-all ${
+              className={`border rounded-xl p-3 flex flex-col justify-between shadow-sm transition-all duration-300 ${
                 isBudgetExceeded
                   ? 'bg-rose-950/25 border-rose-500/60 shadow-rose-950/40'
                   : 'bg-emerald-950/25 border-emerald-500/50 shadow-emerald-950/30'
@@ -1310,7 +1358,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   Saldo / Variação
                 </span>
                 <span
-                  className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full border ${
+                  className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full border transition-all duration-300 ${
                     isBudgetExceeded
                       ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
                       : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
@@ -1321,7 +1369,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
               </div>
 
               <div
-                className={`text-lg md:text-xl font-black tracking-tight my-0.5 ${
+                key={`saldo-${metricsScope}`}
+                className={`text-lg md:text-xl font-black tracking-tight my-0.5 transition-all duration-300 animate-in fade-in ${
                   isBudgetExceeded ? 'text-rose-400' : 'text-emerald-300'
                 }`}
               >
@@ -1345,7 +1394,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           <div className="mt-3 pt-2.5 border-t border-slate-800/60">
             <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
               <span className="flex items-center gap-1 font-semibold">
-                <span>Comprometimento Orçamentário:</span>
+                <span>
+                  Comprometimento Orçamentário ({metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'}):
+                </span>
                 <strong className={isBudgetExceeded ? 'text-rose-400' : 'text-emerald-400'}>
                   {percentualComprometido.toFixed(1)}%
                 </strong>
