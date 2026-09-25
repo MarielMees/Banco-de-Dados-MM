@@ -21,6 +21,7 @@ import MatchReportViewerModal from './MatchReportViewerModal'
 import QuickMatchReportModal from './QuickMatchReportModal'
 import ConfirmDeleteModal from './ConfirmDeleteModal'
 import UserBadge from './UserBadge'
+import NetworkStatusBadge from './NetworkStatusBadge'
 import { fetchMatchReportsFromSupabase } from '../services/supabaseService'
 
 export default function MatchReportsList({
@@ -378,6 +379,9 @@ export default function MatchReportsList({
                 PARTIDAS
               </div>
             </div>
+
+            {/* Status da Conexão / Sincronização Off-line */}
+            <NetworkStatusBadge />
 
             {user && (
               <UserBadge user={user} onSignOut={onSignOut} />

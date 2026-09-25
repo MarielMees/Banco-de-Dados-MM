@@ -19,6 +19,8 @@ import {
   Save,
   FileText
 } from 'lucide-react'
+import VoiceNoteControl from './VoiceNoteControl'
+import NetworkStatusBadge from './NetworkStatusBadge'
 
 const QUICK_COMPETITIONS = [
   'Brasileirão Série A',
@@ -716,13 +718,16 @@ export default function QuickMatchReportModal({
             </div>
           </div>
 
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-          >
-            <X className="w-4 h-4" />
-          </button>
+          <div className="flex items-center gap-2">
+            <NetworkStatusBadge />
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-8 h-8 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-400 hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         {/* Formulário com Scroll Vertical Suave */}
@@ -1003,14 +1008,14 @@ export default function QuickMatchReportModal({
                         </div>
                       </div>
 
-                      {/* Parecer do Treinador Mandante */}
+                      {/* Parecer do Treinador Mandante com Ditado por Voz */}
                       <div>
-                        <textarea
+                        <VoiceNoteControl
                           rows={2}
                           placeholder="Observações táticas sobre escalação, modelo de jogo, postura ou substituições..."
                           value={coachMandante.comentario}
-                          onChange={(e) => handleUpdateCoach('mandante', 'comentario', e.target.value)}
-                          className="w-full bg-[#18263e] border border-slate-700 rounded-lg p-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+                          onChange={(val) => handleUpdateCoach('mandante', 'comentario', val)}
+                          showMinuteButton={true}
                         />
                       </div>
                     </div>
@@ -1172,14 +1177,14 @@ export default function QuickMatchReportModal({
                         </div>
                       </div>
 
-                      {/* Parecer do Treinador Visitante */}
+                      {/* Parecer do Treinador Visitante com Ditado por Voz */}
                       <div>
-                        <textarea
+                        <VoiceNoteControl
                           rows={2}
                           placeholder="Observações táticas sobre postura da equipe, encaixes ou transições..."
                           value={coachVisitante.comentario}
-                          onChange={(e) => handleUpdateCoach('visitante', 'comentario', e.target.value)}
-                          className="w-full bg-[#18263e] border border-slate-700 rounded-lg p-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-indigo-400 resize-none"
+                          onChange={(val) => handleUpdateCoach('visitante', 'comentario', val)}
+                          showMinuteButton={true}
                         />
                       </div>
                     </div>
@@ -1492,14 +1497,14 @@ export default function QuickMatchReportModal({
                       </button>
                     </div>
 
-                    {/* Campo de Texto Rápido de Observação */}
+                    {/* Campo de Texto Rápido de Observação com Ditado por Voz e Minuto */}
                     <div>
-                      <textarea
+                      <VoiceNoteControl
                         rows={2}
                         placeholder="Observação rápida de campo (ou ditar por voz)..."
                         value={entry.comentario}
-                        onChange={(e) => handleUpdateAthlete(index, 'comentario', e.target.value)}
-                        className="w-full bg-[#18263e] border border-slate-700 rounded-lg p-2 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-emerald-500 resize-none"
+                        onChange={(val) => handleUpdateAthlete(index, 'comentario', val)}
+                        showMinuteButton={true}
                       />
                     </div>
                   </div>
@@ -1513,12 +1518,12 @@ export default function QuickMatchReportModal({
             <div className="text-[11px] font-bold text-slate-300 uppercase tracking-wider">
               3. Resumo Geral da Partida (Opcional)
             </div>
-            <textarea
+            <VoiceNoteControl
               rows={2}
-              placeholder="Dinâmica do jogo, aspectos táticos gerais, clima..."
+              placeholder="Dinâmica do jogo, aspectos táticos gerais, clima (ou ditar por voz)..."
               value={analiseGeral}
-              onChange={(e) => setAnaliseGeral(e.target.value)}
-              className="w-full bg-[#16233b] border border-slate-700/80 rounded-lg p-2.5 text-xs text-slate-100 placeholder-slate-500 focus:outline-none focus:border-amber-500 resize-none"
+              onChange={setAnaliseGeral}
+              showMinuteButton={false}
             />
           </div>
 

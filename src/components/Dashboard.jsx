@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import { SCOUT_CONFIG } from '../constants/scoutConfig'
 import UserBadge from './UserBadge'
+import NetworkStatusBadge from './NetworkStatusBadge'
 import { getContractStatus } from '../utils/contractUtils'
 
 const iconMap = {
@@ -217,6 +218,9 @@ export default function Dashboard({
                 ATLETAS
               </div>
             </div>
+
+            {/* Indicador de Modo Estádio / Conexão Off-line */}
+            <NetworkStatusBadge />
 
             {/* Indicador de Usuário Conectado e Botão Sair */}
             {user && (

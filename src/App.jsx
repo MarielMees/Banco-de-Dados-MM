@@ -20,6 +20,7 @@ import {
   upsertMatchReportToSupabase,
   deleteMatchReportFromSupabase
 } from './services/supabaseService'
+import { addToOfflineQueue } from './services/offlineSyncService'
 import { supabase } from './services/supabaseClient'
 import { CURATED_GOALKEEPERS } from './data/curatedGoalkeepers'
 import Login from './components/Login'
@@ -440,8 +441,20 @@ function App() {
       return nextReports
     })
 
-    // Sincroniza o relatório com a tabela 'scout_match_reports' do Supabase
-    upsertMatchReportToSupabase(updatedReport)
+    // Sincroniza o relatório com a tabela 'scout_match_reports' do Supabase ou enfileira se off-line
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      addToOfflineQueue('match_report', updatedReport)
+    } else {
+      upsertMatchReportToSupabase(updatedReport)
+        .then(res => {
+          if (!res || !res.success) {
+            addToOfflineQueue('match_report', updatedReport)
+          }
+        })
+        .catch(() => {
+          addToOfflineQueue('match_report', updatedReport)
+        })
+    }
 
     // Adicionar novo relatório no topo de recentAdditions
     const now = new Date()
@@ -624,8 +637,20 @@ function App() {
       return updated
     })
 
-    // Sincronização em nuvem com a tabela 'players' do Supabase
-    upsertPlayerToSupabase(playerData)
+    // Sincronização em nuvem com a tabela 'players' do Supabase ou enfileira se off-line
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      addToOfflineQueue('player_update', playerData)
+    } else {
+      upsertPlayerToSupabase(playerData)
+        .then(res => {
+          if (!res || !res.success) {
+            addToOfflineQueue('player_update', playerData)
+          }
+        })
+        .catch(() => {
+          addToOfflineQueue('player_update', playerData)
+        })
+    }
   }
 
   const handleDeletePlayer = (id) => {

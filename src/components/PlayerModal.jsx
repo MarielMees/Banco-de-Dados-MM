@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react'
 import { X, UserPlus, Video, Check } from 'lucide-react'
 import { POSITION_CHARACTERISTICS } from '../constants/scoutCharacteristics'
+import VoiceNoteControl from './VoiceNoteControl'
 
 export const POSITIONS_OPTIONS = [
   'Goleiro',
@@ -638,17 +639,17 @@ export default function PlayerModal({
             </div>
           </div>
 
-          {/* OBSERVAÇÕES (TEXTAREA) */}
+          {/* OBSERVAÇÕES (TEXTAREA COM DITADO POR VOZ) */}
           <div>
             <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-              OBSERVAÇÕES DO SCOUT
+              OBSERVAÇÕES DO SCOUT (OU DITADO POR VOZ)
             </label>
-            <textarea
+            <VoiceNoteControl
               rows={3}
               placeholder="Descreva pontos fortes, fracos, comportamento tático, etc..."
               value={formData.observacao || ''}
-              onChange={(e) => setFormData({ ...formData, observacao: e.target.value })}
-              className="w-full bg-[#131d2e] border border-slate-700/80 rounded-lg p-3 text-slate-100 placeholder-slate-500 text-xs focus:outline-none focus:border-emerald-500/80 resize-none"
+              onChange={(val) => setFormData({ ...formData, observacao: val })}
+              showMinuteButton={false}
             />
           </div>
 

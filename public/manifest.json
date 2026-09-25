@@ -1,0 +1,26 @@
+{
+  "name": "Radar de Mercado - Scout & Inteligência Esportiva",
+  "short_name": "Radar Scout",
+  "description": "Plataforma de inteligência esportiva, scout de atletas e acompanhamento de partidas em modo estádio off-line.",
+  "start_url": "/",
+  "id": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#070b12",
+  "theme_color": "#070b12",
+  "categories": ["sports", "productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icons.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

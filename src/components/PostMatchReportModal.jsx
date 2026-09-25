@@ -25,6 +25,8 @@ import {
   Plus
 } from 'lucide-react';
 import { upsertMatchReportToSupabase } from '../services/supabaseService';
+import VoiceNoteControl from './VoiceNoteControl';
+import NetworkStatusBadge from './NetworkStatusBadge';
 
 // Dicionário Oficial de Características por Posição
 export const CARACTERISTICAS_POR_POSICAO = {
@@ -1236,12 +1238,15 @@ export default function PostMatchReportModal({
               </p>
             </div>
           </div>
-          <button
-            onClick={onClose}
-            className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
-          >
-            <X className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-2">
+            <NetworkStatusBadge />
+            <button
+              onClick={onClose}
+              className="text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800 transition cursor-pointer"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         {/* Conteúdo com Scroll */}
@@ -1418,12 +1423,12 @@ export default function PostMatchReportModal({
                     </div>
                   </div>
                   <div>
-                    <textarea
+                    <VoiceNoteControl
                       rows={2}
                       value={parecerCoachMandante}
-                      onChange={(e) => setParecerCoachMandante(e.target.value)}
+                      onChange={setParecerCoachMandante}
                       placeholder="Parecer Tático do Treinador (modelo de jogo, substituições, postura tática...)"
-                      className="w-full bg-slate-900 border border-slate-700/80 focus:border-purple-500 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none resize-none"
+                      showMinuteButton={true}
                     />
                   </div>
                 </div>
@@ -1483,12 +1488,12 @@ export default function PostMatchReportModal({
                     </div>
                   </div>
                   <div>
-                    <textarea
+                    <VoiceNoteControl
                       rows={2}
                       value={parecerCoachVisitante}
-                      onChange={(e) => setParecerCoachVisitante(e.target.value)}
+                      onChange={setParecerCoachVisitante}
                       placeholder="Parecer Tático do Treinador (modelo de jogo, substituições, postura tática...)"
-                      className="w-full bg-slate-900 border border-slate-700/80 focus:border-purple-500 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none resize-none"
+                      showMinuteButton={true}
                     />
                   </div>
                 </div>
@@ -1858,12 +1863,12 @@ export default function PostMatchReportModal({
                       </span>
                     </div>
 
-                    <textarea
+                    <VoiceNoteControl
                       rows={2}
                       value={hl.comment || ''}
-                      onChange={(e) => updateHighlightComment(hl.playerKey, e.target.value)}
-                      placeholder="Parecer técnico individual deste atleta..."
-                      className="w-full bg-slate-950 border border-slate-700/80 rounded-lg p-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-amber-500 resize-none"
+                      onChange={(val) => updateHighlightComment(hl.playerKey, val)}
+                      placeholder="Parecer técnico individual deste atleta (ou ditar por voz)..."
+                      showMinuteButton={true}
                     />
                   </div>
                 ))}
@@ -1876,12 +1881,12 @@ export default function PostMatchReportModal({
             <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
               <FileText className="w-4 h-4" /> Parecer Tático Geral da Partida
             </div>
-            <textarea
+            <VoiceNoteControl
               rows={3}
               value={parecerTatico}
-              onChange={(e) => setParecerTatico(e.target.value)}
-              placeholder="Dinâmica do jogo, aspectos táticos gerais, destaques coletivos e clima do confronto..."
-              className="w-full bg-slate-950 border border-slate-800 focus:border-emerald-500 rounded-lg p-3 text-xs text-white placeholder-slate-500 focus:outline-none resize-none leading-relaxed"
+              onChange={setParecerTatico}
+              placeholder="Dinâmica do jogo, aspectos táticos gerais, destaques coletivos e clima do confronto (ou ditar por voz)..."
+              showMinuteButton={false}
             />
           </div>
         </div>
