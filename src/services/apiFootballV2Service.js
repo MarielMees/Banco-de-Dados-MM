@@ -567,3 +567,105 @@ export async function fetchFixtureById(fixtureId) {
   }
   return null;
 }
+
+/**
+ * Consulta as estatísticas oficiais de uma partida na API-Football
+ * Endpoint: https://v3.football.api-sports.io/fixtures/statistics?fixture={fixtureId}
+ */
+export async function fetchFixtureStatistics(fixtureId) {
+  if (!fixtureId) return { home: null, away: null, raw: [], hasStats: false };
+  const apiKey = getApiFootballKey();
+  if (!apiKey) return { home: null, away: null, raw: [], hasStats: false };
+
+  try {
+    const headers = { 'x-apisports-key': apiKey };
+    const res = await fetch(`${API_BASE_URL}/fixtures/statistics?fixture=${fixtureId}`, { headers });
+    if (!res.ok) {
+      console.warn(`[apiFootballV2] Resposta HTTP ${res.status} em fixtures/statistics para partida ${fixtureId}`);
+      return { home: null, away: null, raw: [], hasStats: false };
+    }
+    const json = await res.json();
+    const data = Array.isArray(json.response) ? json.response : [];
+    if (data.length === 0) {
+      return { home: null, away: null, raw: [], hasStats: false };
+    }
+
+    const parseTeam = (teamObj) => {
+      if (!teamObj || !Array.isArray(teamObj.statistics) || teamObj.statistics.length === 0) return null;
+      const statsList = teamObj.statistics;
+      const getVal = (type) => {
+        const item = statsList.find(s => (s.type || '').toLowerCase().trim() === type.toLowerCase().trim());
+        return item ? item.value : null;
+      };
+
+      const posseRaw = getVal('Ball Possession');
+      const xgRaw = getVal('expected_goals');
+      const totalShotsRaw = getVal('Total Shots');
+      const shotsOnGoalRaw = getVal('Shots on Goal');
+      const foulsRaw = getVal('Fouls');
+      const cornersRaw = getVal('Corner Kicks');
+      const totalPassesRaw = getVal('Total passes');
+      const passesPctRaw = getVal('Passes %');
+
+      const posse = (posseRaw !== null && posseRaw !== undefined && posseRaw !== '')
+        ? String(posseRaw).replace('%', '').trim()
+        : '';
+      const xg = (xgRaw !== null && xgRaw !== undefined && xgRaw !== '')
+        ? String(xgRaw).trim()
+        : '';
+      const finalizacoes = (totalShotsRaw !== null && totalShotsRaw !== undefined && totalShotsRaw !== '')
+        ? String(totalShotsRaw).trim()
+        : '';
+      const finalizacoesAlvo = (shotsOnGoalRaw !== null && shotsOnGoalRaw !== undefined && shotsOnGoalRaw !== '')
+        ? String(shotsOnGoalRaw).trim()
+        : '';
+      const faltas = (foulsRaw !== null && foulsRaw !== undefined && foulsRaw !== '')
+        ? String(foulsRaw).trim()
+        : '';
+      const escanteios = (cornersRaw !== null && cornersRaw !== undefined && cornersRaw !== '')
+        ? String(cornersRaw).trim()
+        : '';
+
+      let passes = '';
+      if (totalPassesRaw !== null && totalPassesRaw !== undefined && totalPassesRaw !== '') {
+        if (passesPctRaw !== null && passesPctRaw !== undefined && passesPctRaw !== '') {
+          const cleanPct = String(passesPctRaw).includes('%') ? passesPctRaw : `${passesPctRaw}%`;
+          passes = `${totalPassesRaw} (${cleanPct})`;
+        } else {
+          passes = String(totalPassesRaw);
+        }
+      }
+
+      const hasValues = Boolean(posse || xg || finalizacoes || finalizacoesAlvo || faltas || escanteios || passes);
+
+      return {
+        posse,
+        xg,
+        passes,
+        finalizacoes,
+        finalizacoesAlvo,
+        faltas,
+        escanteios,
+        teamId: teamObj.team?.id,
+        teamName: teamObj.team?.name,
+        hasValues
+      };
+    };
+
+    const team1 = parseTeam(data[0]);
+    const team2 = data.length > 1 ? parseTeam(data[1]) : null;
+
+    const hasStats = Boolean((team1 && team1.hasValues) || (team2 && team2.hasValues));
+
+    return {
+      home: team1,
+      away: team2,
+      raw: data,
+      hasStats
+    };
+  } catch (err) {
+    console.error('[apiFootballV2] Erro ao buscar estatísticas da partida:', err);
+    return { home: null, away: null, raw: [], hasStats: false, error: err.message };
+  }
+}
+

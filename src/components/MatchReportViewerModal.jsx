@@ -506,9 +506,9 @@ export default function MatchReportViewerModal({
                 <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1 text-center">
                   <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-tight block">Posse de Bola</span>
                   <div className="text-[11px] font-black text-white mt-0.5">
-                    <span className="text-emerald-400">{formatStatVal(statsMandante.posse, '%', '50%')}</span>
+                    <span className="text-emerald-400">{formatStatVal(statsMandante.posse, '%', '-')}</span>
                     <span className="text-slate-600 text-[8.5px] mx-1">vs</span>
-                    <span className="text-teal-400">{formatStatVal(statsVisitante.posse, '%', '50%')}</span>
+                    <span className="text-teal-400">{formatStatVal(statsVisitante.posse, '%', '-')}</span>
                   </div>
                 </div>
 
@@ -516,9 +516,9 @@ export default function MatchReportViewerModal({
                 <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1 text-center">
                   <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-tight block">xG (Gols Esp.)</span>
                   <div className="text-[11px] font-black text-white mt-0.5">
-                    <span className="text-emerald-400">{formatStatVal(statsMandante.xg || statsMandante.xG, '', '1.20')}</span>
+                    <span className="text-emerald-400">{formatStatVal(statsMandante.xg || statsMandante.xG, '', '-')}</span>
                     <span className="text-slate-600 text-[8.5px] mx-1">vs</span>
-                    <span className="text-teal-400">{formatStatVal(statsVisitante.xg || statsVisitante.xG, '', '0.85')}</span>
+                    <span className="text-teal-400">{formatStatVal(statsVisitante.xg || statsVisitante.xG, '', '-')}</span>
                   </div>
                 </div>
 
@@ -527,13 +527,17 @@ export default function MatchReportViewerModal({
                   <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-tight block">Finalizações (Alvo)</span>
                   <div className="text-[11px] font-black text-white mt-0.5">
                     <span className="text-emerald-400">
-                      {formatStatVal(statsMandante.finalizacoes || statsMandante.finalizacoesTotal, '', '12')}
-                      <span className="text-[8px] text-slate-400 ml-0.5">({formatStatVal(statsMandante.finalizacoesNoAlvo, '', '5')})</span>
+                      {formatStatVal(statsMandante.finalizacoes || statsMandante.finalizacoesTotal, '', '-')}
+                      {(statsMandante.finalizacoesNoAlvo !== undefined && statsMandante.finalizacoesNoAlvo !== null && statsMandante.finalizacoesNoAlvo !== '') && (
+                        <span className="text-[8px] text-slate-400 ml-0.5">({statsMandante.finalizacoesNoAlvo})</span>
+                      )}
                     </span>
                     <span className="text-slate-600 text-[8.5px] mx-1">vs</span>
                     <span className="text-teal-400">
-                      {formatStatVal(statsVisitante.finalizacoes || statsVisitante.finalizacoesTotal, '', '8')}
-                      <span className="text-[8px] text-slate-400 ml-0.5">({formatStatVal(statsVisitante.finalizacoesNoAlvo, '', '3')})</span>
+                      {formatStatVal(statsVisitante.finalizacoes || statsVisitante.finalizacoesTotal, '', '-')}
+                      {(statsVisitante.finalizacoesNoAlvo !== undefined && statsVisitante.finalizacoesNoAlvo !== null && statsVisitante.finalizacoesNoAlvo !== '') && (
+                        <span className="text-[8px] text-slate-400 ml-0.5">({statsVisitante.finalizacoesNoAlvo})</span>
+                      )}
                     </span>
                   </div>
                 </div>
@@ -542,9 +546,9 @@ export default function MatchReportViewerModal({
                 <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1 text-center">
                   <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-tight block">Faltas</span>
                   <div className="text-[11px] font-black text-white mt-0.5">
-                    <span className="text-emerald-400">{formatStatVal(statsMandante.faltas, '', '14')}</span>
+                    <span className="text-emerald-400">{formatStatVal(statsMandante.faltas, '', '-')}</span>
                     <span className="text-slate-600 text-[8.5px] mx-1">vs</span>
-                    <span className="text-teal-400">{formatStatVal(statsVisitante.faltas, '', '16')}</span>
+                    <span className="text-teal-400">{formatStatVal(statsVisitante.faltas, '', '-')}</span>
                   </div>
                 </div>
 
@@ -552,9 +556,9 @@ export default function MatchReportViewerModal({
                 <div className="bg-slate-950/80 border border-slate-800/80 rounded p-1 text-center">
                   <span className="text-[7.5px] font-bold text-slate-400 uppercase tracking-tight block">Escanteios</span>
                   <div className="text-[11px] font-black text-white mt-0.5">
-                    <span className="text-emerald-400">{formatStatVal(statsMandante.escanteios, '', '6')}</span>
+                    <span className="text-emerald-400">{formatStatVal(statsMandante.escanteios, '', '-')}</span>
                     <span className="text-slate-600 text-[8.5px] mx-1">vs</span>
-                    <span className="text-teal-400">{formatStatVal(statsVisitante.escanteios, '', '4')}</span>
+                    <span className="text-teal-400">{formatStatVal(statsVisitante.escanteios, '', '-')}</span>
                   </div>
                 </div>
               </div>

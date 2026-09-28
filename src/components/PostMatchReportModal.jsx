@@ -26,8 +26,7 @@ import {
   RotateCw
 } from 'lucide-react';
 import { upsertMatchReportToSupabase } from '../services/supabaseService';
-import { fetchFixtureById } from '../services/apiFootballV2Service';
-import { fetchMatchDetails } from '../services/fotmobService';
+import { fetchFixtureById, fetchFixtureStatistics } from '../services/apiFootballV2Service';
 import VoiceNoteControl from './VoiceNoteControl';
 import NetworkStatusBadge from './NetworkStatusBadge';
 
@@ -282,25 +281,25 @@ export default function PostMatchReportModal({
   const [esquemaMandante, setEsquemaMandante] = useState('4-3-3');
   const [esquemaVisitante, setEsquemaVisitante] = useState('4-2-3-1');
 
-  // Estatísticas Coletivas
+  // Estatísticas Coletivas (Valores Reais - sem mocks inventados)
   const [statsMandante, setStatsMandante] = useState({
-    posse: '52',
-    xg: '1.45',
-    passes: '420 (84%)',
-    finalizacoes: '14',
-    finalizacoesAlvo: '6',
-    faltas: '12',
-    escanteios: '5'
+    posse: '',
+    xg: '',
+    passes: '',
+    finalizacoes: '',
+    finalizacoesAlvo: '',
+    faltas: '',
+    escanteios: ''
   });
 
   const [statsVisitante, setStatsVisitante] = useState({
-    posse: '48',
-    xg: '0.85',
-    passes: '380 (78%)',
-    finalizacoes: '9',
-    finalizacoesAlvo: '3',
-    faltas: '15',
-    escanteios: '4'
+    posse: '',
+    xg: '',
+    passes: '',
+    finalizacoes: '',
+    finalizacoesAlvo: '',
+    faltas: '',
+    escanteios: ''
   });
 
   // Atletas das duas equipes (lado a lado)
@@ -497,23 +496,23 @@ export default function PostMatchReportModal({
     const rawStatsV = activeMatch.estatisticas?.visitante || activeMatch.statsVisitante || {};
 
     setStatsMandante({
-      posse: rawStatsM.posse || '52',
-      xg: rawStatsM.xg || '1.45',
-      passes: rawStatsM.passes || '420 (84%)',
-      finalizacoes: rawStatsM.finalizacoes || '14',
-      finalizacoesAlvo: rawStatsM.finalizacoesAlvo || '6',
-      faltas: rawStatsM.faltas || '12',
-      escanteios: rawStatsM.escanteios || '5'
+      posse: (rawStatsM.posse !== undefined && rawStatsM.posse !== null) ? String(rawStatsM.posse) : '',
+      xg: (rawStatsM.xg !== undefined && rawStatsM.xg !== null) ? String(rawStatsM.xg) : '',
+      passes: (rawStatsM.passes !== undefined && rawStatsM.passes !== null) ? String(rawStatsM.passes) : '',
+      finalizacoes: (rawStatsM.finalizacoes !== undefined && rawStatsM.finalizacoes !== null) ? String(rawStatsM.finalizacoes) : '',
+      finalizacoesAlvo: (rawStatsM.finalizacoesAlvo !== undefined && rawStatsM.finalizacoesAlvo !== null) ? String(rawStatsM.finalizacoesAlvo) : '',
+      faltas: (rawStatsM.faltas !== undefined && rawStatsM.faltas !== null) ? String(rawStatsM.faltas) : '',
+      escanteios: (rawStatsM.escanteios !== undefined && rawStatsM.escanteios !== null) ? String(rawStatsM.escanteios) : ''
     });
 
     setStatsVisitante({
-      posse: rawStatsV.posse || '48',
-      xg: rawStatsV.xg || '0.85',
-      passes: rawStatsV.passes || '380 (78%)',
-      finalizacoes: rawStatsV.finalizacoes || '9',
-      finalizacoesAlvo: rawStatsV.finalizacoesAlvo || '3',
-      faltas: rawStatsV.faltas || '15',
-      escanteios: rawStatsV.escanteios || '4'
+      posse: (rawStatsV.posse !== undefined && rawStatsV.posse !== null) ? String(rawStatsV.posse) : '',
+      xg: (rawStatsV.xg !== undefined && rawStatsV.xg !== null) ? String(rawStatsV.xg) : '',
+      passes: (rawStatsV.passes !== undefined && rawStatsV.passes !== null) ? String(rawStatsV.passes) : '',
+      finalizacoes: (rawStatsV.finalizacoes !== undefined && rawStatsV.finalizacoes !== null) ? String(rawStatsV.finalizacoes) : '',
+      finalizacoesAlvo: (rawStatsV.finalizacoesAlvo !== undefined && rawStatsV.finalizacoesAlvo !== null) ? String(rawStatsV.finalizacoesAlvo) : '',
+      faltas: (rawStatsV.faltas !== undefined && rawStatsV.faltas !== null) ? String(rawStatsV.faltas) : '',
+      escanteios: (rawStatsV.escanteios !== undefined && rawStatsV.escanteios !== null) ? String(rawStatsV.escanteios) : ''
     });
 
     // 5. Atletas e Destaques
@@ -834,7 +833,7 @@ export default function PostMatchReportModal({
         return;
       }
 
-      const newCoachId = 'coach-' + Date.now() + '-' + Math.floor(Math.random() * 1000);
+      const newCoachId = 'coach-' + Date.now();
       const coachObj = {
         id: newCoachId,
         nome: coachName.trim(),
@@ -922,7 +921,7 @@ export default function PostMatchReportModal({
       (atleta.savedPlayerId && String(p.id) === String(atleta.savedPlayerId))
     );
 
-    const generatedId = existingP ? existingP.id : (atleta.savedPlayerId || Date.now() + Math.floor(Math.random() * 1000));
+    const generatedId = existingP ? existingP.id : (atleta.savedPlayerId || Date.now());
     const isMonitoring = Boolean(monitoramento);
     const isSub23 = Boolean(radarSub23);
     const isHotList = Boolean(hotList);
@@ -1113,79 +1112,123 @@ export default function PostMatchReportModal({
     }
   };
 
-  // Re-sincronização On-Demand com a API
+  // Re-sincronização On-Demand com a API-Football Oficial
   const handleResyncWithApi = async () => {
-    const targetId = activeMatch.fixtureId || activeMatch.matchId || activeMatch.id;
-    if (!targetId) {
-      setResyncFeedback('ID da partida não encontrado para re-sincronização.');
-      setTimeout(() => setResyncFeedback(null), 3000);
+    const rawId = activeMatch.fixtureId || activeMatch.matchId || activeMatch.id;
+    const numMatch = String(rawId || '').match(/\d+/);
+    const targetFixtureId = numMatch ? numMatch[0] : null;
+
+    if (!targetFixtureId) {
+      setResyncFeedback('ID da partida inválido para consulta na API-Football.');
+      setTimeout(() => setResyncFeedback(null), 3500);
       return;
     }
 
     setIsResyncing(true);
     try {
-      let updated = false;
+      let updatedPlacar = false;
+      let updatedStats = false;
 
-      // 1. Tenta API-Football se houver chave e ID numérico
-      if (!isNaN(Number(targetId))) {
-        const fixtureData = await fetchFixtureById(targetId);
-        if (fixtureData && fixtureData.fixture) {
-          if (fixtureData.goals && fixtureData.goals.home !== null && fixtureData.goals.home !== undefined) {
-            setPlacarMandante(Number(fixtureData.goals.home));
-            setPlacarVisitante(Number(fixtureData.goals.away ?? 0));
-            updated = true;
-          }
-          if (fixtureData.fixture.status?.short) {
-            const st = fixtureData.fixture.status.short.toUpperCase();
-            if (['FT', 'AET', 'PEN'].includes(st)) setStatusJogo("Encerrado (90')");
-            else if (['1H', 'HT', '2H', 'ET', 'P', 'LIVE'].includes(st)) setStatusJogo("Em Andamento");
-            else if (['PST', 'CANC', 'ABD'].includes(st)) setStatusJogo("Adiado");
-            else if (st === 'NS' || st === 'TBD') setStatusJogo("Not Started");
-            updated = true;
-          }
-          if (fixtureData.fixture.venue?.name) {
-            setEstadio(fixtureData.fixture.venue.name);
-          }
-          if (fixtureData.league?.round) {
-            setRodada(fixtureData.league.round);
-          }
+      // 1. Consulta detalhes do fixture (Placar, Status, Estádio, Rodada) na API-Football
+      const fixtureData = await fetchFixtureById(targetFixtureId);
+      if (fixtureData && fixtureData.fixture) {
+        if (fixtureData.goals && fixtureData.goals.home !== null && fixtureData.goals.home !== undefined) {
+          setPlacarMandante(Number(fixtureData.goals.home));
+          setPlacarVisitante(Number(fixtureData.goals.away ?? 0));
+          updatedPlacar = true;
+        }
+        if (fixtureData.fixture.status?.short) {
+          const st = fixtureData.fixture.status.short.toUpperCase();
+          if (['FT', 'AET', 'PEN'].includes(st)) setStatusJogo("Encerrado (90')");
+          else if (['1H', 'HT', '2H', 'ET', 'P', 'LIVE'].includes(st)) setStatusJogo("Em Andamento");
+          else if (['PST', 'CANC', 'ABD'].includes(st)) setStatusJogo("Adiado");
+          else if (st === 'NS' || st === 'TBD') setStatusJogo("Not Started");
+          updatedPlacar = true;
+        }
+        if (fixtureData.fixture.venue?.name) {
+          setEstadio(fixtureData.fixture.venue.name);
+        }
+        if (fixtureData.league?.round) {
+          setRodada(fixtureData.league.round);
         }
       }
 
-      // 2. Tenta FotMob caso não tenha atualizado ou para enriquecer estatísticas
-      try {
-        const fotmobDetails = await fetchMatchDetails(targetId);
-        if (fotmobDetails) {
-          if (fotmobDetails.placarMandante !== undefined && fotmobDetails.placarMandante !== null && !isNaN(fotmobDetails.placarMandante)) {
-            setPlacarMandante(Number(fotmobDetails.placarMandante));
-            setPlacarVisitante(Number(fotmobDetails.placarVisitante ?? 0));
-            updated = true;
-          }
-          if (fotmobDetails.statusShort) {
-            const st = fotmobDetails.statusShort.toUpperCase();
-            if (st === 'FT') setStatusJogo("Encerrado (90')");
-            else if (st === 'LIVE') setStatusJogo("Em Andamento");
-            else if (st === 'PST') setStatusJogo("Adiado");
-            updated = true;
-          }
-          if (fotmobDetails.statsMandante && (fotmobDetails.statsMandante.posse || fotmobDetails.statsMandante.xg)) {
-            setStatsMandante(prev => ({ ...prev, ...fotmobDetails.statsMandante }));
-            setStatsVisitante(prev => ({ ...prev, ...fotmobDetails.statsVisitante }));
-            updated = true;
+      // 2. Chamada Exclusiva ao endpoint oficial de estatísticas da API-Football:
+      // https://v3.football.api-sports.io/fixtures/statistics?fixture={fixtureId}
+      const statsResult = await fetchFixtureStatistics(targetFixtureId);
+
+      if (statsResult && statsResult.hasStats) {
+        const homeId = fixtureData?.teams?.home?.id;
+        const awayId = fixtureData?.teams?.away?.id;
+
+        let homeStats = statsResult.home;
+        let awayStats = statsResult.away;
+
+        if (homeId && statsResult.raw && statsResult.raw.length >= 2) {
+          if (statsResult.raw[1].team?.id === homeId) {
+            homeStats = statsResult.away;
+            awayStats = statsResult.home;
           }
         }
-      } catch (_) {}
 
-      if (updated) {
-        setResyncFeedback('Dados e placar re-sincronizados com a API!');
+        if (homeStats) {
+          setStatsMandante({
+            posse: homeStats.posse || '',
+            xg: homeStats.xg || '',
+            passes: homeStats.passes || '',
+            finalizacoes: homeStats.finalizacoes || '',
+            finalizacoesAlvo: homeStats.finalizacoesAlvo || '',
+            faltas: homeStats.faltas || '',
+            escanteios: homeStats.escanteios || ''
+          });
+        }
+        if (awayStats) {
+          setStatsVisitante({
+            posse: awayStats.posse || '',
+            xg: awayStats.xg || '',
+            passes: awayStats.passes || '',
+            finalizacoes: awayStats.finalizacoes || '',
+            finalizacoesAlvo: awayStats.finalizacoesAlvo || '',
+            faltas: awayStats.faltas || '',
+            escanteios: awayStats.escanteios || ''
+          });
+        }
+        updatedStats = true;
+        setResyncFeedback('Dados e estatísticas reais sincronizados com a API-Football!');
       } else {
-        setResyncFeedback('Nenhuma alteração encontrada na API no momento.');
+        // Estatísticas não disponíveis: limpa para strings vazias (sem inventar dados) e notifica o scout
+        setStatsMandante({
+          posse: '',
+          xg: '',
+          passes: '',
+          finalizacoes: '',
+          finalizacoesAlvo: '',
+          faltas: '',
+          escanteios: ''
+        });
+        setStatsVisitante({
+          posse: '',
+          xg: '',
+          passes: '',
+          finalizacoes: '',
+          finalizacoesAlvo: '',
+          faltas: '',
+          escanteios: ''
+        });
+        setResyncFeedback('Estatísticas não disponibilizadas pela API para esta partida. Insira manualmente.');
+      }
+
+      if (updatedPlacar && !updatedStats) {
+        // Feedback de ausência de estatísticas já definido acima
+      } else if (!updatedPlacar && !updatedStats) {
+        setResyncFeedback('Estatísticas não disponibilizadas pela API para esta partida. Insira manualmente.');
       }
     } catch (err) {
-      setResyncFeedback('Erro ao re-sincronizar com a API.');
+      console.error('[PostMatchReportModal] Erro ao re-sincronizar:', err);
+      setResyncFeedback('Erro ao consultar a API-Football.');
     } finally {
       setIsResyncing(false);
-      setTimeout(() => setResyncFeedback(null), 3500);
+      setTimeout(() => setResyncFeedback(null), 4000);
     }
   };
 
@@ -1659,24 +1702,37 @@ export default function PostMatchReportModal({
 
             {/* Painel de Estatísticas Coletivas */}
             <div className="bg-slate-900/90 border border-slate-800 rounded-xl p-4 space-y-3">
-              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-1.5">
-                <Activity className="w-4 h-4" /> Estatísticas Coletivas (Editáveis)
+              <div className="text-[11px] font-bold text-emerald-400 uppercase tracking-wider flex items-center justify-between">
+                <span className="flex items-center gap-1.5">
+                  <Activity className="w-4 h-4" /> Estatísticas Coletivas (Editáveis)
+                </span>
+                <span className="text-[10px] text-slate-400 font-normal">
+                  {mandanteNome} vs {visitanteNome}
+                </span>
               </div>
+
+              {/* Feedback visual discreto quando estatísticas não estão disponibilizadas pela API */}
+              {(!statsMandante.posse && !statsMandante.xg && !statsMandante.finalizacoes && !statsVisitante.posse && !statsVisitante.xg && !statsVisitante.finalizacoes) && (
+                <div className="flex items-center gap-1.5 p-2 rounded-lg bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[10px] sm:text-[11px] font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>Estatísticas não disponibilizadas pela API para esta partida. Insira manualmente.</span>
+                </div>
+              )}
 
               <div className="space-y-1.5">
                 {[
-                  { label: 'Posse de Bola (%)', mKey: 'posse', vKey: 'posse', placeholder: '50' },
-                  { label: 'xG (Gols Esperados)', mKey: 'xg', vKey: 'xg', placeholder: '1.20' },
-                  { label: 'Passes Totais / Certos', mKey: 'passes', vKey: 'passes', placeholder: '400 (80%)', wide: true },
-                  { label: 'Finalizações Totais', mKey: 'finalizacoes', vKey: 'finalizacoes', placeholder: '10' },
-                  { label: 'Finalizações no Alvo', mKey: 'finalizacoesAlvo', vKey: 'finalizacoesAlvo', placeholder: '4' },
-                  { label: 'Faltas Cometidas', mKey: 'faltas', vKey: 'faltas', placeholder: '12' },
-                  { label: 'Escanteios', mKey: 'escanteios', vKey: 'escanteios', placeholder: '5' }
+                  { label: 'Posse de Bola (%)', mKey: 'posse', vKey: 'posse', placeholder: 'Ex: 50' },
+                  { label: 'xG (Gols Esperados)', mKey: 'xg', vKey: 'xg', placeholder: 'Ex: 1.20' },
+                  { label: 'Passes Totais / Certos', mKey: 'passes', vKey: 'passes', placeholder: 'Ex: 400 (80%)', wide: true },
+                  { label: 'Finalizações Totais', mKey: 'finalizacoes', vKey: 'finalizacoes', placeholder: 'Ex: 10' },
+                  { label: 'Finalizações no Alvo', mKey: 'finalizacoesAlvo', vKey: 'finalizacoesAlvo', placeholder: 'Ex: 4' },
+                  { label: 'Faltas Cometidas', mKey: 'faltas', vKey: 'faltas', placeholder: 'Ex: 12' },
+                  { label: 'Escanteios', mKey: 'escanteios', vKey: 'escanteios', placeholder: 'Ex: 5' }
                 ].map((item, idx) => (
                   <div key={idx} className="flex items-center justify-between gap-2 bg-slate-950/60 p-1.5 px-2.5 rounded-lg border border-slate-800/80">
                     <input
                       type="text"
-                      value={statsMandante[item.mKey]}
+                      value={statsMandante[item.mKey] || ''}
                       onChange={(e) => setStatsMandante({ ...statsMandante, [item.mKey]: e.target.value })}
                       placeholder={item.placeholder}
                       className={(item.wide ? 'w-24 text-[11px]' : 'w-14 text-xs') + ' text-center bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-white font-bold focus:border-emerald-500'}
@@ -1684,7 +1740,7 @@ export default function PostMatchReportModal({
                     <span className="text-[10px] sm:text-[11px] text-slate-400 font-medium text-center flex-1">{item.label}</span>
                     <input
                       type="text"
-                      value={statsVisitante[item.vKey]}
+                      value={statsVisitante[item.vKey] || ''}
                       onChange={(e) => setStatsVisitante({ ...statsVisitante, [item.vKey]: e.target.value })}
                       placeholder={item.placeholder}
                       className={(item.wide ? 'w-24 text-[11px]' : 'w-14 text-xs') + ' text-center bg-slate-900 border border-slate-700 rounded px-1 py-0.5 text-white font-bold focus:border-emerald-500'}
