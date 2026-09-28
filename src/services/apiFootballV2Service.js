@@ -545,3 +545,25 @@ export async function fetchFixtureLineupsAndPlayers(fixtureId) {
     return { lineups: [], players: [], error: err.message };
   }
 }
+
+/**
+ * Consulta uma partida específica pelo seu fixtureId na API-Football
+ */
+export async function fetchFixtureById(fixtureId) {
+  if (!fixtureId) return null;
+  const apiKey = getApiFootballKey();
+  if (!apiKey) return null;
+
+  try {
+    const headers = { 'x-apisports-key': apiKey };
+    const res = await fetch(`${API_BASE_URL}/fixtures?id=${fixtureId}`, { headers });
+    if (!res.ok) return null;
+    const json = await res.json();
+    if (Array.isArray(json.response) && json.response.length > 0) {
+      return json.response[0];
+    }
+  } catch (err) {
+    console.error('[apiFootballV2] Erro ao buscar fixture por id:', err);
+  }
+  return null;
+}

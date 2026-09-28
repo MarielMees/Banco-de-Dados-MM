@@ -254,7 +254,11 @@ export function mapReportToSupabaseRow(report) {
   const homeLineup = Array.isArray(report.atletasMandante) ? report.atletasMandante : (Array.isArray(report.home_lineup) ? report.home_lineup : []);
   const awayLineup = Array.isArray(report.atletasVisitante) ? report.atletasVisitante : (Array.isArray(report.away_lineup) ? report.away_lineup : []);
 
-  const notes = report.analiseGeral || report.parecerTatico || report.scout_notes || report.observacoes || '';
+  const statusVal = report.statusJogo || report.status || "Encerrado (90')";
+  let notes = report.analiseGeral || report.parecerTatico || report.scout_notes || report.observacoes || '';
+  if (statusVal && !notes.includes('[STATUS:')) {
+    notes = `[STATUS: ${statusVal}]\n` + notes;
+  }
 
   return {
     id: String(report.id || `rep_${Date.now()}`),
@@ -268,7 +272,8 @@ export function mapReportToSupabaseRow(report) {
     highlights: highlightsArr,
     home_lineup: homeLineup,
     away_lineup: awayLineup,
-    scout_notes: notes
+    scout_notes: notes,
+    status: statusVal
   };
 }
 
@@ -290,6 +295,16 @@ export function mapSupabaseRowToReport(row) {
 
   const combinedAthletes = [...homeLineup, ...awayLineup];
 
+  let parsedStatus = row.status || 'Concluído';
+  let notes = row.scout_notes || '';
+  if (notes.includes('[STATUS:')) {
+    const match = notes.match(/\[STATUS:\s*([^\]]+)\]/);
+    if (match) {
+      parsedStatus = match[1];
+      notes = notes.replace(/\[STATUS:\s*[^\]]+\]\n?/, '');
+    }
+  }
+
   return {
     id: row.id,
     fixtureId: row.match_id,
@@ -309,15 +324,18 @@ export function mapSupabaseRowToReport(row) {
     placarMandante: hScore,
     placarVisitante: aScore,
     placarObj: { mandante: hScore, visitante: aScore },
+    homeScore: hScore,
+    awayScore: aScore,
     atletasMandante: homeLineup,
     atletasVisitante: awayLineup,
     atletasAvaliados: combinedAthletes.length > 0 ? combinedAthletes : highlights,
     destaques: highlights,
     highlights: highlights,
-    analiseGeral: row.scout_notes || '',
-    parecerTatico: row.scout_notes || '',
-    scout_notes: row.scout_notes || '',
-    status: 'Concluído',
+    analiseGeral: notes,
+    parecerTatico: notes,
+    scout_notes: notes,
+    status: parsedStatus,
+    statusJogo: parsedStatus,
     created_at: row.created_at
   };
 }
@@ -354,10 +372,21 @@ export async function upsertMatchReportToSupabase(report) {
     const row = mapReportToSupabaseRow(report);
     if (!row) return { success: false, error: 'Dados inválidos' };
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from('scout_match_reports')
       .upsert(row, { onConflict: 'id' })
       .select();
+
+    // Se o banco falhar porque a coluna status não existe fisicamente na tabela, faz fallback seguro
+    if (error && error.message && error.message.toLowerCase().includes('status')) {
+      const { status: _st, ...rowWithoutStatus } = row;
+      const fallbackRes = await supabase
+        .from('scout_match_reports')
+        .upsert(rowWithoutStatus, { onConflict: 'id' })
+        .select();
+      data = fallbackRes.data;
+      error = fallbackRes.error;
+    }
 
     if (error) {
       console.warn('[Supabase] Erro ao salvar scout_match_reports:', error.message);

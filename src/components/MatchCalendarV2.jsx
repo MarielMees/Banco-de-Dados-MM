@@ -736,15 +736,25 @@ export default function MatchCalendarV2({
     setReports(nextReports || getStoredReportsV2());
 
     // 2. Atualiza a partida no repositório de partidas da Agenda 2.0
+    const repHomeScore = safePayload.homeScore ?? safePayload.placarMandante ?? safePayload.placarObj?.mandante;
+    const repAwayScore = safePayload.awayScore ?? safePayload.placarVisitante ?? safePayload.placarObj?.visitante;
+    const isEncerrado = safePayload.statusJogo === "Encerrado (90')" || safePayload.status === 'Concluído' || (!safePayload.statusJogo && safePayload.statusShort === 'FT');
+
     const updated = matches.map(m => {
       if (String(m.id) === targetMatchId || String(m?.fixture?.id) === targetMatchId) {
         return {
           ...m,
+          homeScore: repHomeScore !== undefined ? repHomeScore : m.homeScore,
+          awayScore: repAwayScore !== undefined ? repAwayScore : m.awayScore,
+          placar: { mandante: repHomeScore ?? 0, visitante: repAwayScore ?? 0 },
+          status: safePayload.statusShort || safePayload.status || m.status,
+          statusShort: safePayload.statusShort || safePayload.status || m.statusShort,
+          statusLong: safePayload.statusJogo || safePayload.status || m.statusLong,
           hasReport: true,
           reportStatus: 'CONCLUIDO',
           reportId: safePayload.id,
           scoutReport: safePayload,
-          isArchived: true
+          isArchived: isEncerrado
         };
       }
       return m;
@@ -1084,6 +1094,24 @@ export default function MatchCalendarV2({
               {upcomingAndLiveMatches.map((match) => {
                 const isLive = LIVE_STATUS_CODES.includes(match?.status || match?.fixture?.status?.short);
                 const hasExpressNotes = Boolean(match?.expressNotes);
+                const report = (reports || []).find(r => 
+                  (r?.fixtureId && String(r.fixtureId) === String(match?.id)) ||
+                  (r?.matchId && String(r.matchId) === String(match?.id)) ||
+                  (r?.match_id && String(r.match_id) === String(match?.id)) ||
+                  (match?.fixtureId && r?.fixtureId && String(r.fixtureId) === String(match.fixtureId)) ||
+                  (match?.reportId && String(r?.id) === String(match.reportId)) ||
+                  (r?.id && String(r.id) === String(match?.id)) ||
+                  (r?.partida && match?.homeTeam && match?.awayTeam && r.partida.toLowerCase().includes(match.homeTeam.toLowerCase()) && r.partida.toLowerCase().includes(match.awayTeam.toLowerCase()))
+                ) || match?.scoutReport;
+
+                const repScoreM = report?.placarMandante ?? report?.placarObj?.mandante ?? (typeof report?.placar === 'string' && report.placar.includes('x') ? parseInt(report.placar.split('x')[0].trim(), 10) : null);
+                const repScoreV = report?.placarVisitante ?? report?.placarObj?.visitante ?? (typeof report?.placar === 'string' && report.placar.includes('x') ? parseInt(report.placar.split('x')[1].trim(), 10) : null);
+                const hasCustomScore = repScoreM !== null && repScoreV !== null && !isNaN(repScoreM) && !isNaN(repScoreV);
+
+                const displayHomeScore = hasCustomScore ? repScoreM : (match?.homeScore ?? 0);
+                const displayAwayScore = hasCustomScore ? repScoreV : (match?.awayScore ?? 0);
+                const reportStatusText = report?.statusJogo || (report ? 'Relatório Salvo' : null);
+
                 const homeName = match?.homeTeam || match?.teams?.home?.name || 'Mandante';
                 const awayName = match?.awayTeam || match?.teams?.away?.name || 'Visitante';
                 const leagueTitle = match?.leagueName || match?.league?.name || 'Competição Oficial';
@@ -1116,7 +1144,12 @@ export default function MatchCalendarV2({
                           )}
                         </div>
 
-                        {isLive ? (
+                        {reportStatusText ? (
+                          <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            <span>{reportStatusText}</span>
+                          </span>
+                        ) : isLive ? (
                           <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[10px] font-bold animate-pulse shrink-0 flex items-center gap-1">
                             <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
                             AO VIVO ({match?.elapsed || 0}')
@@ -1136,7 +1169,13 @@ export default function MatchCalendarV2({
                         </span>
                         {isLive ? (
                           <div className="px-2.5 py-1 bg-rose-950/60 border border-rose-500/40 rounded-lg text-xs font-mono font-bold text-rose-400 shrink-0">
-                            {match?.homeScore ?? 0} x {match?.awayScore ?? 0}
+                            {displayHomeScore} x {displayAwayScore}
+                          </div>
+                        ) : hasCustomScore ? (
+                          <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-emerald-500/30 font-mono font-black text-emerald-400 text-sm shrink-0">
+                            <span>{displayHomeScore}</span>
+                            <span className="text-slate-500 text-xs">x</span>
+                            <span>{displayAwayScore}</span>
                           </div>
                         ) : (
                           <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
@@ -1233,6 +1272,12 @@ export default function MatchCalendarV2({
                   (r?.partida && match?.homeTeam && match?.awayTeam && r.partida.toLowerCase().includes(match.homeTeam.toLowerCase()) && r.partida.toLowerCase().includes(match.awayTeam.toLowerCase()))
                 ) || match?.scoutReport;
                 const isReportDone = Boolean(report || match?.hasReport || match?.scoutReport || match?.reportStatus === 'CONCLUIDO');
+                const repScoreM = report?.placarMandante ?? report?.placarObj?.mandante ?? (typeof report?.placar === 'string' && report.placar.includes('x') ? parseInt(report.placar.split('x')[0].trim(), 10) : null);
+                const repScoreV = report?.placarVisitante ?? report?.placarObj?.visitante ?? (typeof report?.placar === 'string' && report.placar.includes('x') ? parseInt(report.placar.split('x')[1].trim(), 10) : null);
+                const hasCustomScore = repScoreM !== null && repScoreV !== null && !isNaN(repScoreM) && !isNaN(repScoreV);
+
+                const displayHomeScore = hasCustomScore ? repScoreM : (match?.homeScore ?? 0);
+                const displayAwayScore = hasCustomScore ? repScoreV : (match?.awayScore ?? 0);
                 const homeName = match?.homeTeam || match?.teams?.home?.name || 'Mandante';
                 const awayName = match?.awayTeam || match?.teams?.away?.name || 'Visitante';
                 const leagueTitle = match?.leagueName || match?.league?.name || 'Competição Oficial';
@@ -1242,6 +1287,7 @@ export default function MatchCalendarV2({
                 const matchDateText = match?.date || (match?.datetime ? String(match.datetime).split('T')[0] : '');
                 const mKey = match?.id || match?.fixtureId || match?.fixture?.id || Math.random();
                 const statusShort = match?.statusShort || match?.status || 'FT';
+                const displayStatusText = report?.statusJogo || (statusShort === 'FT' ? "Encerrado (90')" : (match?.statusLong || 'Concluído'));
 
                 return (
                   <div
@@ -1268,7 +1314,7 @@ export default function MatchCalendarV2({
                         {isReportDone ? (
                           <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
                             <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                            <span>Concluído</span>
+                            <span>{report?.statusJogo || 'Concluído'}</span>
                           </span>
                         ) : (
                           <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-400 border border-slate-700 text-[10px] font-medium shrink-0 flex items-center gap-1">
@@ -1284,9 +1330,9 @@ export default function MatchCalendarV2({
                           {homeName}
                         </span>
                         <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-slate-700 font-mono font-black text-emerald-400 text-sm shrink-0">
-                          <span>{match?.homeScore ?? 0}</span>
+                          <span>{displayHomeScore}</span>
                           <span className="text-slate-500 text-xs">x</span>
-                          <span>{match?.awayScore ?? 0}</span>
+                          <span>{displayAwayScore}</span>
                         </div>
                         <span className="text-base font-bold text-slate-100 flex-1 text-left pl-3 truncate" title={awayName}>
                           {awayName}
@@ -1301,7 +1347,7 @@ export default function MatchCalendarV2({
                             {matchDateText}
                           </span>
                           <span className="text-[10px] font-mono text-slate-400">
-                            {statusShort === 'FT' ? "Encerrado (90')" : (match?.statusLong || 'Concluído')}
+                            {displayStatusText}
                           </span>
                         </div>
                         <div className="flex items-center gap-1.5 truncate">

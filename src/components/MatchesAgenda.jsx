@@ -295,6 +295,34 @@ function MatchesAgendaInternal({
       localStorage.setItem('scout_match_reports', JSON.stringify(nextList));
       localStorage.setItem('radar_match_reports', JSON.stringify(nextList));
       setLocalReports(nextList);
+
+      // Atualiza também no banco de partidas local se houver fixture correspondente
+      if (savedPayload.fixtureId || savedPayload.matchId || savedPayload.id) {
+        const targetId = String(savedPayload.fixtureId || savedPayload.matchId || savedPayload.id);
+        const repHomeScore = savedPayload.homeScore ?? savedPayload.placarMandante ?? savedPayload.placarObj?.mandante;
+        const repAwayScore = savedPayload.awayScore ?? savedPayload.placarVisitante ?? savedPayload.placarObj?.visitante;
+        const isEncerrado = savedPayload.statusJogo === "Encerrado (90')" || savedPayload.status === 'Concluído';
+
+        const updatedDb = (databaseMatches || []).map(m => {
+          if (String(m.id) === targetId || String(m.fixtureId) === targetId) {
+            return {
+              ...m,
+              homeScore: repHomeScore !== undefined ? repHomeScore : m.homeScore,
+              awayScore: repAwayScore !== undefined ? repAwayScore : m.awayScore,
+              placar: { mandante: repHomeScore ?? 0, visitante: repAwayScore ?? 0 },
+              status: savedPayload.statusShort || savedPayload.status || m.status,
+              statusShort: savedPayload.statusShort || savedPayload.status || m.statusShort,
+              statusLong: savedPayload.statusJogo || savedPayload.status || m.statusLong,
+              hasReport: true,
+              reportStatus: 'CONCLUIDO',
+              isArchived: isEncerrado
+            };
+          }
+          return m;
+        });
+        setDatabaseMatches(updatedDb);
+        saveStoredDatabaseMatches(updatedDb);
+      }
     } catch (e) {
       console.warn('[MatchesAgenda] Erro ao atualizar storage de relatórios:', e);
     }
@@ -917,6 +945,19 @@ function MatchesAgendaInternal({
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
                   {archivedMatches.map((match) => {
+                    const linkedReport = (localReports || []).find(r => 
+                      (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.fixtureId)) ||
+                      (r?.matchId && String(r.matchId) === String(match?.id || match?.fixtureId)) ||
+                      (r?.id && String(r.id) === String(match?.id)) ||
+                      (r?.partida && match?.mandante?.nome && r.partida.includes(match.mandante.nome))
+                    );
+                    const repScoreM = linkedReport?.placarObj?.mandante ?? linkedReport?.placarMandante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[0].trim(), 10) : null);
+                    const repScoreV = linkedReport?.placarObj?.visitante ?? linkedReport?.placarVisitante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[1].trim(), 10) : null);
+
+                    const homeScore = repScoreM !== null && !isNaN(repScoreM) ? repScoreM : (match?.homeScore ?? match?.goals_home ?? match?.goals?.home ?? null);
+                    const awayScore = repScoreV !== null && !isNaN(repScoreV) ? repScoreV : (match?.awayScore ?? match?.goals_away ?? match?.goals?.away ?? null);
+                    const hasScore = homeScore !== null && awayScore !== null && !isNaN(homeScore) && !isNaN(awayScore);
+
                     const mNome = match?.mandante?.nome || match?.homeTeam || match?.home?.name || match?.teams?.home?.name || (typeof match?.mandante === 'string' ? match.mandante : 'Mandante');
                     const vNome = match?.visitante?.nome || match?.awayTeam || match?.away?.name || match?.teams?.away?.name || (typeof match?.visitante === 'string' ? match.visitante : 'Visitante');
 
@@ -937,10 +978,17 @@ function MatchesAgendaInternal({
                                 {match?.rodada || match?.round || match?.roundName || 'Rodada Oficial'}
                               </span>
                             </div>
-                            <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-semibold shrink-0 flex items-center gap-1">
-                              <Archive className="w-3 h-3 text-slate-400" />
-                              <span>Arquivado (Sem Relatório)</span>
-                            </span>
+                            {linkedReport ? (
+                              <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                <span>{linkedReport?.statusJogo || 'Relatório Salvo'}</span>
+                              </span>
+                            ) : (
+                              <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-semibold shrink-0 flex items-center gap-1">
+                                <Archive className="w-3 h-3 text-slate-400" />
+                                <span>Arquivado (Sem Relatório)</span>
+                              </span>
+                            )}
                           </div>
 
                           {/* Confronto Central: Mandante x Visitante (Texto Limpo Sem Escudos) */}
@@ -948,9 +996,17 @@ function MatchesAgendaInternal({
                             <span className="text-base font-bold text-slate-100 flex-1 text-right pr-3 truncate" title={mNome}>
                               {mNome}
                             </span>
-                            <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
-                              VS
-                            </span>
+                            {hasScore ? (
+                              <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-emerald-500/30 font-mono font-black text-emerald-400 text-sm shrink-0">
+                                <span>{homeScore}</span>
+                                <span className="text-slate-500 text-xs">x</span>
+                                <span>{awayScore}</span>
+                              </div>
+                            ) : (
+                              <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
+                                VS
+                              </span>
+                            )}
                             <span className="text-base font-bold text-slate-100 flex-1 text-left pl-3 truncate" title={vNome}>
                               {vNome}
                             </span>
@@ -1153,6 +1209,20 @@ function MatchesAgendaInternal({
             {scheduledMatches.map((match) => {
               const isLive = LIVE_STATUSES.includes((match?.status || '').toLowerCase()) || LIVE_STATUSES.includes((match?.statusShort || '').toLowerCase());
 
+              const linkedReport = (localReports || []).find(r => 
+                (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
+                (r?.matchId && String(r.matchId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
+                (r?.id && String(r.id) === String(match?.id || match?.partida_id)) ||
+                (r?.partida && match?.mandante?.nome && r.partida.includes(match.mandante.nome))
+              );
+              const repScoreM = linkedReport?.placarObj?.mandante ?? linkedReport?.placarMandante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[0].trim(), 10) : null);
+              const repScoreV = linkedReport?.placarObj?.visitante ?? linkedReport?.placarVisitante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[1].trim(), 10) : null);
+
+              const homeScore = repScoreM !== null && !isNaN(repScoreM) ? repScoreM : (match?.homeScore ?? match?.goals_home ?? match?.goals?.home ?? null);
+              const awayScore = repScoreV !== null && !isNaN(repScoreV) ? repScoreV : (match?.awayScore ?? match?.goals_away ?? match?.goals?.away ?? null);
+              const hasScore = homeScore !== null && awayScore !== null && !isNaN(homeScore) && !isNaN(awayScore);
+              const statusText = linkedReport?.statusJogo || (linkedReport ? 'Relatório Salvo' : null);
+
               const mNome = match?.mandante?.nome || match?.homeTeam || match?.home?.name || match?.teams?.home?.name || (typeof match?.mandante === 'string' ? match.mandante : 'Mandante');
               const vNome = match?.visitante?.nome || match?.awayTeam || match?.away?.name || match?.teams?.away?.name || (typeof match?.visitante === 'string' ? match.visitante : 'Visitante');
 
@@ -1174,7 +1244,12 @@ function MatchesAgendaInternal({
                         </span>
                       </div>
 
-                      {isLive ? (
+                      {statusText ? (
+                        <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          <span>{statusText}</span>
+                        </span>
+                      ) : isLive ? (
                         <span className="px-2 py-0.5 rounded-md bg-rose-500/15 text-rose-400 border border-rose-500/30 text-[10px] font-bold animate-pulse shrink-0 flex items-center gap-1">
                           <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-ping"></span>
                           AO VIVO
@@ -1192,9 +1267,17 @@ function MatchesAgendaInternal({
                       <span className="text-base font-bold text-slate-100 flex-1 text-right pr-3 truncate" title={mNome}>
                         {mNome}
                       </span>
-                      <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
-                        {isLive ? 'AO VIVO' : 'VS'}
-                      </span>
+                      {hasScore ? (
+                        <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-emerald-500/30 font-mono font-black text-emerald-400 text-sm shrink-0">
+                          <span>{homeScore}</span>
+                          <span className="text-slate-500 text-xs">x</span>
+                          <span>{awayScore}</span>
+                        </div>
+                      ) : (
+                        <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
+                          {isLive ? 'AO VIVO' : 'VS'}
+                        </span>
+                      )}
                       <span className="text-base font-bold text-slate-100 flex-1 text-left pl-3 truncate" title={vNome}>
                         {vNome}
                       </span>
@@ -1335,7 +1418,21 @@ function MatchesAgendaInternal({
                   <span>Jogos Arquivados ({archivedMatches.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {archivedMatches.map(match => (
+                  {archivedMatches.map(match => {
+                    const linkedReport = (localReports || []).find(r => 
+                      (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.fixtureId)) ||
+                      (r?.matchId && String(r.matchId) === String(match?.id || match?.fixtureId)) ||
+                      (r?.id && String(r.id) === String(match?.id)) ||
+                      (r?.partida && match?.mandante?.nome && r.partida.includes(match.mandante.nome))
+                    );
+                    const repScoreM = linkedReport?.placarObj?.mandante ?? linkedReport?.placarMandante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[0].trim(), 10) : null);
+                    const repScoreV = linkedReport?.placarObj?.visitante ?? linkedReport?.placarVisitante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[1].trim(), 10) : null);
+
+                    const homeScore = repScoreM !== null && !isNaN(repScoreM) ? repScoreM : (match?.homeScore ?? match?.goals_home ?? match?.goals?.home ?? null);
+                    const awayScore = repScoreV !== null && !isNaN(repScoreV) ? repScoreV : (match?.awayScore ?? match?.goals_away ?? match?.goals?.away ?? null);
+                    const hasScore = homeScore !== null && awayScore !== null && !isNaN(homeScore) && !isNaN(awayScore);
+
+                    return (
                     <div
                       key={match?.id || Math.random()}
                       className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
@@ -1345,9 +1442,16 @@ function MatchesAgendaInternal({
                           <span className="text-[11px] font-bold text-slate-400 truncate">
                             {match?.campeonato || match?.competicao || 'Competição'}
                           </span>
-                          <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-semibold">
-                            Arquivado (Sem Relatório)
-                          </span>
+                          {linkedReport ? (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>{linkedReport?.statusJogo || 'Relatório Salvo'}</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 border border-slate-700 text-[10px] font-semibold">
+                              Arquivado (Sem Relatório)
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-400 font-medium mb-3 flex items-center gap-1.5">
                           <Calendar className="w-3.5 h-3.5 text-slate-500" />
@@ -1357,9 +1461,17 @@ function MatchesAgendaInternal({
                           <span className="text-base font-bold text-slate-100 flex-1 text-right pr-3 truncate" title={match?.mandante?.nome || match?.homeTeam || 'Mandante'}>
                             {match?.mandante?.nome || match?.homeTeam || 'Mandante'}
                           </span>
-                          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
-                            VS
-                          </span>
+                          {hasScore ? (
+                            <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-emerald-500/30 font-mono font-black text-emerald-400 text-sm shrink-0">
+                              <span>{homeScore}</span>
+                              <span className="text-slate-500 text-xs">x</span>
+                              <span>{awayScore}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
+                              VS
+                            </span>
+                          )}
                           <span className="text-base font-bold text-slate-100 flex-1 text-left pl-3 truncate" title={match?.visitante?.nome || match?.awayTeam || 'Visitante'}>
                             {match?.visitante?.nome || match?.awayTeam || 'Visitante'}
                           </span>
@@ -1383,7 +1495,8 @@ function MatchesAgendaInternal({
                         </button>
                       </div>
                     </div>
-                  ))}
+                  );
+                })}
                 </div>
               </div>
             )}
@@ -1395,7 +1508,22 @@ function MatchesAgendaInternal({
                   <span>Próximos Confrontos Agendados ({scheduledMatches.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {scheduledMatches.map(match => (
+                  {scheduledMatches.map(match => {
+                    const linkedReport = (localReports || []).find(r => 
+                      (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
+                      (r?.matchId && String(r.matchId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
+                      (r?.id && String(r.id) === String(match?.id || match?.partida_id)) ||
+                      (r?.partida && match?.mandante?.nome && r.partida.includes(match.mandante.nome))
+                    );
+                    const repScoreM = linkedReport?.placarObj?.mandante ?? linkedReport?.placarMandante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[0].trim(), 10) : null);
+                    const repScoreV = linkedReport?.placarObj?.visitante ?? linkedReport?.placarVisitante ?? (typeof linkedReport?.placar === 'string' && linkedReport.placar.includes('x') ? parseInt(linkedReport.placar.split('x')[1].trim(), 10) : null);
+
+                    const homeScore = repScoreM !== null && !isNaN(repScoreM) ? repScoreM : (match?.homeScore ?? match?.goals_home ?? match?.goals?.home ?? null);
+                    const awayScore = repScoreV !== null && !isNaN(repScoreV) ? repScoreV : (match?.awayScore ?? match?.goals_away ?? match?.goals?.away ?? null);
+                    const hasScore = homeScore !== null && awayScore !== null && !isNaN(homeScore) && !isNaN(awayScore);
+                    const statusText = linkedReport?.statusJogo || (linkedReport ? 'Relatório Salvo' : null);
+
+                    return (
                     <div
                       key={match?.id || Math.random()}
                       className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
@@ -1405,9 +1533,16 @@ function MatchesAgendaInternal({
                           <span className="text-[11px] font-bold text-blue-400 truncate">
                             {match?.campeonato || match?.competicao || 'Competição'}
                           </span>
-                          <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-semibold">
-                            {match?.hora || 'Agendado'}
-                          </span>
+                          {statusText ? (
+                            <span className="px-2 py-0.5 rounded-md bg-emerald-500/15 text-emerald-400 border border-emerald-500/30 text-[10px] font-bold shrink-0 flex items-center gap-1">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                              <span>{statusText}</span>
+                            </span>
+                          ) : (
+                            <span className="px-2 py-0.5 rounded-md bg-slate-800 text-slate-300 text-[10px] font-semibold">
+                              {match?.hora || 'Agendado'}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11px] text-slate-400 font-medium mb-3 flex items-center gap-1.5">
                           <Calendar className="w-3.5 h-3.5 text-slate-500" />
@@ -1417,9 +1552,17 @@ function MatchesAgendaInternal({
                           <span className="text-base font-bold text-slate-100 flex-1 text-right pr-3 truncate" title={match?.mandante?.nome || match?.homeTeam || 'Mandante'}>
                             {match?.mandante?.nome || match?.homeTeam || 'Mandante'}
                           </span>
-                          <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
-                            VS
-                          </span>
+                          {hasScore ? (
+                            <div className="flex items-center gap-2 bg-slate-900 px-3 py-1 rounded-lg border border-emerald-500/30 font-mono font-black text-emerald-400 text-sm shrink-0">
+                              <span>{homeScore}</span>
+                              <span className="text-slate-500 text-xs">x</span>
+                              <span>{awayScore}</span>
+                            </div>
+                          ) : (
+                            <span className="text-xs font-semibold px-2.5 py-1 bg-slate-800 text-amber-400 rounded shrink-0">
+                              VS
+                            </span>
+                          )}
                           <span className="text-base font-bold text-slate-100 flex-1 text-left pl-3 truncate" title={match?.visitante?.nome || match?.awayTeam || 'Visitante'}>
                             {match?.visitante?.nome || match?.awayTeam || 'Visitante'}
                           </span>

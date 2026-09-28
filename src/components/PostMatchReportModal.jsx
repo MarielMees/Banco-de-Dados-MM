@@ -22,9 +22,12 @@ import {
   Telescope,
   Flame,
   FileEdit,
-  Plus
+  Plus,
+  RotateCw
 } from 'lucide-react';
 import { upsertMatchReportToSupabase } from '../services/supabaseService';
+import { fetchFixtureById } from '../services/apiFootballV2Service';
+import { fetchMatchDetails } from '../services/fotmobService';
 import VoiceNoteControl from './VoiceNoteControl';
 import NetworkStatusBadge from './NetworkStatusBadge';
 
@@ -257,6 +260,9 @@ export default function PostMatchReportModal({
   const [estadio, setEstadio] = useState('');
   const [placarMandante, setPlacarMandante] = useState(0);
   const [placarVisitante, setPlacarVisitante] = useState(0);
+  const [statusJogo, setStatusJogo] = useState("Encerrado (90')");
+  const [isResyncing, setIsResyncing] = useState(false);
+  const [resyncFeedback, setResyncFeedback] = useState(null);
 
   // Nomes dos clubes
   const [mandanteNome, setMandanteNome] = useState('Mandante');
@@ -387,6 +393,24 @@ export default function PostMatchReportModal({
     }
     setPlacarMandante(mPlacar);
     setPlacarVisitante(vPlacar);
+
+    // 2.1 Status da Partida
+    let initialStatus = activeMatch.statusJogo || activeMatch.matchStatus || '';
+    if (!initialStatus) {
+      const s = String(activeMatch.statusShort || activeMatch.status || '').toUpperCase().trim();
+      if (s === 'NS' || s === 'TBD' || s === 'NOT STARTED') {
+        initialStatus = 'Not Started';
+      } else if (['FT', 'AET', 'PEN', 'CONCLUÍDO', 'CONCLUIDO', 'MATCH FINISHED'].includes(s)) {
+        initialStatus = "Encerrado (90')";
+      } else if (['PST', 'CANC', 'ABD', 'AWD', 'WO', 'ADIADO', 'CANCELADO'].includes(s)) {
+        initialStatus = 'Adiado';
+      } else if (['1H', 'HT', '2H', 'ET', 'P', 'LIVE', 'EM ANDAMENTO'].includes(s)) {
+        initialStatus = 'Em Andamento';
+      } else {
+        initialStatus = activeMatch.status || "Encerrado (90')";
+      }
+    }
+    setStatusJogo(initialStatus);
 
     // 3. Treinadores
     let coachM = activeMatch.treinadorMandante || activeMatch.coachHome?.name || (typeof activeMatch.coachHome === 'string' ? activeMatch.coachHome : '') || '';
@@ -1089,6 +1113,82 @@ export default function PostMatchReportModal({
     }
   };
 
+  // Re-sincronização On-Demand com a API
+  const handleResyncWithApi = async () => {
+    const targetId = activeMatch.fixtureId || activeMatch.matchId || activeMatch.id;
+    if (!targetId) {
+      setResyncFeedback('ID da partida não encontrado para re-sincronização.');
+      setTimeout(() => setResyncFeedback(null), 3000);
+      return;
+    }
+
+    setIsResyncing(true);
+    try {
+      let updated = false;
+
+      // 1. Tenta API-Football se houver chave e ID numérico
+      if (!isNaN(Number(targetId))) {
+        const fixtureData = await fetchFixtureById(targetId);
+        if (fixtureData && fixtureData.fixture) {
+          if (fixtureData.goals && fixtureData.goals.home !== null && fixtureData.goals.home !== undefined) {
+            setPlacarMandante(Number(fixtureData.goals.home));
+            setPlacarVisitante(Number(fixtureData.goals.away ?? 0));
+            updated = true;
+          }
+          if (fixtureData.fixture.status?.short) {
+            const st = fixtureData.fixture.status.short.toUpperCase();
+            if (['FT', 'AET', 'PEN'].includes(st)) setStatusJogo("Encerrado (90')");
+            else if (['1H', 'HT', '2H', 'ET', 'P', 'LIVE'].includes(st)) setStatusJogo("Em Andamento");
+            else if (['PST', 'CANC', 'ABD'].includes(st)) setStatusJogo("Adiado");
+            else if (st === 'NS' || st === 'TBD') setStatusJogo("Not Started");
+            updated = true;
+          }
+          if (fixtureData.fixture.venue?.name) {
+            setEstadio(fixtureData.fixture.venue.name);
+          }
+          if (fixtureData.league?.round) {
+            setRodada(fixtureData.league.round);
+          }
+        }
+      }
+
+      // 2. Tenta FotMob caso não tenha atualizado ou para enriquecer estatísticas
+      try {
+        const fotmobDetails = await fetchMatchDetails(targetId);
+        if (fotmobDetails) {
+          if (fotmobDetails.placarMandante !== undefined && fotmobDetails.placarMandante !== null && !isNaN(fotmobDetails.placarMandante)) {
+            setPlacarMandante(Number(fotmobDetails.placarMandante));
+            setPlacarVisitante(Number(fotmobDetails.placarVisitante ?? 0));
+            updated = true;
+          }
+          if (fotmobDetails.statusShort) {
+            const st = fotmobDetails.statusShort.toUpperCase();
+            if (st === 'FT') setStatusJogo("Encerrado (90')");
+            else if (st === 'LIVE') setStatusJogo("Em Andamento");
+            else if (st === 'PST') setStatusJogo("Adiado");
+            updated = true;
+          }
+          if (fotmobDetails.statsMandante && (fotmobDetails.statsMandante.posse || fotmobDetails.statsMandante.xg)) {
+            setStatsMandante(prev => ({ ...prev, ...fotmobDetails.statsMandante }));
+            setStatsVisitante(prev => ({ ...prev, ...fotmobDetails.statsVisitante }));
+            updated = true;
+          }
+        }
+      } catch (_) {}
+
+      if (updated) {
+        setResyncFeedback('Dados e placar re-sincronizados com a API!');
+      } else {
+        setResyncFeedback('Nenhuma alteração encontrada na API no momento.');
+      }
+    } catch (err) {
+      setResyncFeedback('Erro ao re-sincronizar com a API.');
+    } finally {
+      setIsResyncing(false);
+      setTimeout(() => setResyncFeedback(null), 3500);
+    }
+  };
+
   // Salvar relatório completo (mantendo ID original se editando)
   const handleSaveFullReport = () => {
     const todosAtletas = [...atletasMandante, ...atletasVisitante];
@@ -1112,6 +1212,10 @@ export default function PostMatchReportModal({
       placarVisitante,
       placar_mandante: placarMandante,
       placar_visitante: placarVisitante,
+      homeScore: placarMandante,
+      awayScore: placarVisitante,
+      statusJogo: statusJogo,
+      matchStatus: statusJogo,
       mandante: { nome: mandanteNome },
       visitante: { nome: visitanteNome },
       tipo: 'pos-jogo-completo',
@@ -1189,7 +1293,8 @@ export default function PostMatchReportModal({
       highlights: highlights,
       destaques: todosAtletas.filter(a => Boolean(a.isHighlight || a.destaque)),
       analiseGeral: parecerTatico,
-      status: 'Concluído'
+      status: statusJogo || 'Concluído',
+      statusShort: statusJogo === 'Not Started' ? 'NS' : (statusJogo === 'Adiado' ? 'PST' : (statusJogo === 'Em Andamento' ? 'LIVE' : 'FT'))
     };
 
     // Persistência na nuvem com a tabela 'scout_match_reports' do Supabase
@@ -1239,6 +1344,16 @@ export default function PostMatchReportModal({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleResyncWithApi}
+              disabled={isResyncing}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-emerald-400 border border-slate-700/80 text-xs font-semibold transition cursor-pointer disabled:opacity-50"
+              title="Re-sincronizar placar, escalação e estatísticas com a API"
+            >
+              <RotateCw className={`w-3.5 h-3.5 text-emerald-400 ${isResyncing ? 'animate-spin' : ''}`} />
+              <span className="hidden sm:inline">{isResyncing ? 'Sincronizando...' : 'Re-sincronizar API'}</span>
+            </button>
             <NetworkStatusBadge />
             <button
               onClick={onClose}
@@ -1248,6 +1363,14 @@ export default function PostMatchReportModal({
             </button>
           </div>
         </div>
+
+        {/* Feedback da Re-sincronização com API */}
+        {resyncFeedback && (
+          <div className="bg-emerald-950/80 border-b border-emerald-500/30 px-4 sm:px-6 py-2 text-xs font-medium text-emerald-300 flex items-center gap-2 animate-in fade-in">
+            <Sparkles className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+            <span>{resyncFeedback}</span>
+          </div>
+        )}
 
         {/* Conteúdo com Scroll */}
         <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 overflow-y-auto flex-1 text-xs">
@@ -1328,33 +1451,67 @@ export default function PostMatchReportModal({
               </div>
             </div>
 
-            {/* Placar Editável */}
-            <div className="flex items-center justify-center gap-4 bg-slate-950/70 border border-slate-800 p-3 rounded-xl">
-              <div className="text-center font-bold text-white text-sm max-w-[180px] truncate">
-                {mandanteNome || 'Mandante'}
+            {/* Placar Editável e Status Oficial da Partida */}
+            <div className="bg-slate-950/70 border border-slate-800 p-3.5 sm:p-4 rounded-xl space-y-3">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                {/* Seletor de Status */}
+                <div className="flex items-center gap-2.5 w-full md:w-auto">
+                  <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider whitespace-nowrap">
+                    Status da Partida:
+                  </span>
+                  <select
+                    value={statusJogo}
+                    onChange={(e) => setStatusJogo(e.target.value)}
+                    className="bg-slate-900 border border-slate-700 text-xs font-bold text-emerald-400 rounded-lg px-3 py-1.5 focus:outline-none focus:border-emerald-500 cursor-pointer w-full sm:w-auto"
+                  >
+                    <option value="Encerrado (90')">Encerrado (90')</option>
+                    <option value="Em Andamento">Em Andamento</option>
+                    <option value="Adiado">Adiado</option>
+                    <option value="Not Started">Não Iniciado (Not Started)</option>
+                  </select>
+                </div>
+
+                {/* Placar Editável */}
+                <div className="flex items-center justify-center gap-3 w-full md:w-auto">
+                  <div className="text-right font-bold text-white text-xs sm:text-sm max-w-[140px] truncate" title={mandanteNome}>
+                    {mandanteNome || 'Mandante'}
+                  </div>
+                  <div className="flex items-center gap-2 bg-slate-900/80 p-1.5 rounded-xl border border-slate-700/80">
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={placarMandante}
+                      onChange={(e) => setPlacarMandante(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-12 h-10 bg-slate-950 border border-emerald-500/40 rounded-lg text-center font-black text-lg text-emerald-400 focus:outline-none focus:border-emerald-400 shadow-inner"
+                      title="Gols Mandante"
+                    />
+                    <span className="text-slate-500 font-black text-sm">X</span>
+                    <input
+                      type="number"
+                      min="0"
+                      max="30"
+                      value={placarVisitante}
+                      onChange={(e) => setPlacarVisitante(Math.max(0, parseInt(e.target.value) || 0))}
+                      className="w-12 h-10 bg-slate-950 border border-emerald-500/40 rounded-lg text-center font-black text-lg text-emerald-400 focus:outline-none focus:border-emerald-400 shadow-inner"
+                      title="Gols Visitante"
+                    />
+                  </div>
+                  <div className="text-left font-bold text-white text-xs sm:text-sm max-w-[140px] truncate" title={visitanteNome}>
+                    {visitanteNome || 'Visitante'}
+                  </div>
+                </div>
               </div>
-              <div className="flex items-center gap-2">
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  value={placarMandante}
-                  onChange={(e) => setPlacarMandante(parseInt(e.target.value) || 0)}
-                  className="w-12 h-10 bg-slate-900 border border-emerald-500/40 rounded-lg text-center font-black text-lg text-emerald-400 focus:outline-none focus:border-emerald-400 shadow-inner"
-                />
-                <span className="text-slate-500 font-black text-sm">X</span>
-                <input
-                  type="number"
-                  min="0"
-                  max="20"
-                  value={placarVisitante}
-                  onChange={(e) => setPlacarVisitante(parseInt(e.target.value) || 0)}
-                  className="w-12 h-10 bg-slate-900 border border-emerald-500/40 rounded-lg text-center font-black text-lg text-emerald-400 focus:outline-none focus:border-emerald-400 shadow-inner"
-                />
-              </div>
-              <div className="text-center font-bold text-white text-sm max-w-[180px] truncate">
-                {visitanteNome || 'Visitante'}
-              </div>
+
+              {/* Destaque sutil para jogos sem placar inicial ou Não Iniciados */}
+              {(statusJogo === 'Not Started' || (placarMandante === 0 && placarVisitante === 0)) && (
+                <div className="flex items-center gap-2 pt-2 border-t border-slate-800/80 text-[11px] text-amber-400/90 font-medium">
+                  <AlertCircle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                  <span>
+                    Jogo marcado como não iniciado ou 0x0. Corrija o placar e selecione o status (ex: <strong>"Encerrado (90')"</strong>) para registrar a súmula final.
+                  </span>
+                </div>
+              )}
             </div>
           </div>
 
