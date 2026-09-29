@@ -38,21 +38,42 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed) && parsed.length > 0) {
-          const existingIds = new Set(parsed.map(p => String(p.id)))
-          const existingNames = new Set(parsed.map(p => (p.nome || p.name || '').toLowerCase().trim()))
+          const enriched = parsed.map(p => {
+            const curated = ALL_CURATED_PLAYERS.find(cg =>
+              String(cg.id) === String(p.id) ||
+              (cg.nome && p.nome && cg.nome.toLowerCase().trim() === p.nome.toLowerCase().trim()) ||
+              (cg.name && p.nome && cg.name.toLowerCase().trim() === p.nome.toLowerCase().trim()) ||
+              (cg.nome && p.name && cg.nome.toLowerCase().trim() === p.name.toLowerCase().trim()) ||
+              (cg.name && p.name && cg.name.toLowerCase().trim() === p.name.toLowerCase().trim())
+            );
+            if (curated) {
+              return {
+                ...curated,
+                ...p,
+                secondary_position: curated.secondary_position !== undefined ? curated.secondary_position : (p.secondary_position || null),
+                posSecundaria: curated.posSecundaria !== undefined ? curated.posSecundaria : (p.posSecundaria || '—'),
+                tactical_dna: (curated.tactical_dna && curated.tactical_dna.length > 0) ? curated.tactical_dna : (p.tactical_dna || []),
+                caracteristicas: (curated.caracteristicas && curated.caracteristicas.length > 0) ? curated.caracteristicas : (p.caracteristicas || []),
+                agent: curated.agent !== undefined ? curated.agent : (p.agent || null),
+                agente: curated.agente !== undefined ? curated.agente : (p.agente || '—'),
+                contract_end: curated.contract_end !== undefined ? curated.contract_end : (p.contract_end || null),
+                contrato: curated.contrato !== undefined ? curated.contrato : (p.contrato || '')
+              };
+            }
+            return p;
+          });
+          const existingIds = new Set(enriched.map(p => String(p.id)))
+          const existingNames = new Set(enriched.map(p => (p.nome || p.name || '').toLowerCase().trim()))
           const missingCurated = ALL_CURATED_PLAYERS.filter(cp =>
             !existingIds.has(String(cp.id)) &&
             !existingNames.has((cp.nome || cp.name || '').toLowerCase().trim())
           )
-          if (missingCurated.length > 0) {
-            const combined = [...parsed, ...missingCurated]
-            try {
-              localStorage.setItem('scout_players', JSON.stringify(combined))
-              localStorage.setItem('radar_players', JSON.stringify(combined))
-            } catch (_) {}
-            return combined
-          }
-          return parsed
+          const combined = missingCurated.length > 0 ? [...enriched, ...missingCurated] : enriched
+          try {
+            localStorage.setItem('scout_players', JSON.stringify(combined))
+            localStorage.setItem('radar_players', JSON.stringify(combined))
+          } catch (_) {}
+          return combined
         }
       }
       return ALL_CURATED_PLAYERS
@@ -161,7 +182,11 @@ function App() {
                   current_club: rp.current_club || source.current_club || rp.clubeAtual || source.clubeAtual || '',
                   loan_details: rp.loan_details || source.loan_details || rp.emprestimo || source.emprestimo || null,
                   youth_club: rp.youth_club || source.youth_club || rp.clubeFormador || source.clubeFormador || '',
+                  secondary_position: rp.secondary_position !== undefined ? rp.secondary_position : (source.secondary_position || null),
+                  posSecundaria: rp.posSecundaria || source.posSecundaria || (source.secondary_position === 'Lateral Direito' ? 'Lat. Direito' : (source.secondary_position === 'Zagueiro Canhoto' ? 'Zag. Canhoto' : '—')),
                   tactical_dna: (rp.tactical_dna && rp.tactical_dna.length > 0) ? rp.tactical_dna : (source.tactical_dna || rp.caracteristicas || source.caracteristicas || []),
+                  agent: rp.agent !== undefined ? rp.agent : (source.agent || null),
+                  agente: rp.agente || source.agente || '—',
                   contract_end: rp.contract_end || source.contract_end || rp.contrato || source.contrato || null,
                   alt: rp.alt || source.alt || source.altura || null,
                   altura: rp.altura || source.altura || source.alt || null,

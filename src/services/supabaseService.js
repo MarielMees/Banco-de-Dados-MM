@@ -137,6 +137,8 @@ export function mapSupabaseRowToPlayer(row) {
     origem: row.origem || (curatedMatch ? curatedMatch.origem : (isProv ? 'Destaque de Relatório' : 'Base')),
     loan_details: curatedMatch ? (curatedMatch.loan_details || curatedMatch.emprestimo || null) : null,
     emprestimo: curatedMatch ? (curatedMatch.emprestimo || curatedMatch.loan_details || null) : null,
+    secondary_position: curatedMatch?.secondary_position || null,
+    posSecundaria: curatedMatch?.posSecundaria || (curatedMatch?.secondary_position ? (curatedMatch.secondary_position === 'Lateral Direito' ? 'Lat. Direito' : (curatedMatch.secondary_position === 'Zagueiro Canhoto' ? 'Zag. Canhoto' : curatedMatch.secondary_position)) : '—'),
     isProvisorio: isProv,
     is_provisorio: isProv,
     tier: row.nivel || (curatedMatch ? (curatedMatch.tier || curatedMatch.nivel) : (isProv ? '' : 'B')),
@@ -146,9 +148,10 @@ export function mapSupabaseRowToPlayer(row) {
     caracteristicas: (curatedMatch && curatedMatch.caracteristicas && curatedMatch.caracteristicas.length > 0)
       ? curatedMatch.caracteristicas
       : (curatedMatch?.tactical_dna || (isProv ? ['Destaque de Campo'] : [])),
-    agente: curatedMatch ? curatedMatch.agente : '',
-    contract_end: curatedMatch ? (curatedMatch.contract_end || curatedMatch.contrato) : '',
-    contrato: curatedMatch ? (curatedMatch.contrato || curatedMatch.contract_end) : '',
+    agent: curatedMatch?.agent || curatedMatch?.agente || null,
+    agente: curatedMatch ? (curatedMatch.agente || curatedMatch.agent || '—') : '—',
+    contract_end: curatedMatch ? (curatedMatch.contract_end || curatedMatch.contrato || null) : null,
+    contrato: curatedMatch ? (curatedMatch.contrato || curatedMatch.contract_end || '') : '',
     contract_status: curatedMatch ? (curatedMatch.contract_status || curatedMatch.situacao) : 'OK',
     situacao: curatedMatch ? curatedMatch.situacao : 'OK',
     alerta: curatedMatch ? curatedMatch.alerta : 'OK',
