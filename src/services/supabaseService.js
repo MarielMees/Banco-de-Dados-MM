@@ -1,12 +1,12 @@
 import { supabase } from './supabaseClient.js';
-import { CURATED_GOALKEEPERS } from '../data/curatedGoalkeepers.js';
+import { ALL_CURATED_PLAYERS } from '../data/curatedPlayers.js';
 
 /**
  * Mapeamento Atleta (App) -> Linha da Tabela 'players' (Supabase)
  */
 export function mapPlayerToSupabaseRow(p) {
   if (!p) return null;
-  const rawIdade = p.idade || p.an || p.anoNascimento;
+  const rawIdade = p.idade || p.an || p.anoNascimento || p.birth_year;
   let numIdade = null;
   if (rawIdade) {
     const parsed = parseInt(String(rawIdade), 10);
@@ -21,15 +21,15 @@ export function mapPlayerToSupabaseRow(p) {
 
   return {
     id: String(p.id),
-    nome: String(p.nome || 'Atleta').trim(),
-    clube_atual: p.clubeAtual || p.ca || p.clube || null,
-    posicao: p.posicaoLabel || p.posicao || null,
-    pe_preferencial: p.pePreferencial || p.pe || null,
+    nome: String(p.name || p.nome || 'Atleta').trim(),
+    clube_atual: p.current_club || p.clubeAtual || p.ca || p.clube || null,
+    posicao: p.position || p.posicaoLabel || p.posicao || null,
+    pe_preferencial: p.preferred_foot || p.pePreferencial || p.pe || null,
     idade: numIdade,
     nacionalidade: p.nacionalidade || 'Brasileiro',
-    origem: p.clubeOrigem || p.clubeFormador || p.origem || 'Base',
+    origem: p.youth_club || p.clubeOrigem || p.clubeFormador || p.origem || 'Base',
     is_provisorio: Boolean(p.isProvisorio || p.is_provisorio),
-    nivel: p.nivel || 'B',
+    nivel: p.tier || p.nivel || 'B',
     estimated_salary: (p.estimated_salary !== undefined && p.estimated_salary !== null && p.estimated_salary !== '')
       ? Number(String(p.estimated_salary).replace(/[^\d.-]/g, ''))
       : ((p.salarioEstimado !== undefined && p.salarioEstimado !== null && p.salarioEstimado !== '')
@@ -103,39 +103,53 @@ export function mapSupabaseRowToPlayer(row) {
   }
 
   // Consulta catálogo curado para completar características e detalhes estendidos
-  const curatedMatch = CURATED_GOALKEEPERS.find(g => 
+  const curatedMatch = ALL_CURATED_PLAYERS.find(g => 
     String(g.id) === String(row.id) || 
-    (g.nome && row.nome && g.nome.toLowerCase().trim() === row.nome.toLowerCase().trim())
+    (g.nome && row.nome && g.nome.toLowerCase().trim() === row.nome.toLowerCase().trim()) ||
+    (g.name && row.nome && g.name.toLowerCase().trim() === row.nome.toLowerCase().trim())
   );
 
   return {
     id: row.id,
+    name: row.nome || (curatedMatch ? (curatedMatch.name || curatedMatch.nome) : 'Atleta Observado'),
     nome: row.nome || (curatedMatch ? curatedMatch.nome : 'Atleta Observado'),
+    current_club: row.clube_atual || (curatedMatch ? (curatedMatch.current_club || curatedMatch.clubeAtual) : ''),
     clubeAtual: row.clube_atual || (curatedMatch ? curatedMatch.clubeAtual : ''),
     ca: row.clube_atual || (curatedMatch ? curatedMatch.ca : ''),
     clube: row.clube_atual || (curatedMatch ? curatedMatch.clube : ''),
+    position: curatedMatch?.position || row.posicao || 'Zagueiro Destro',
     posicao: posId,
     posicaoOriginal: row.posicao || (curatedMatch ? curatedMatch.posicaoOriginal : ''),
     posicaoLabel: formatPosLabel(row.posicao || posId),
+    preferred_foot: pe || (curatedMatch ? (curatedMatch.preferred_foot || curatedMatch.pePreferencial) : 'Destro'),
     pePreferencial: pe || (curatedMatch ? curatedMatch.pePreferencial : 'Destro'),
     pe: pe || (curatedMatch ? curatedMatch.pe : 'Destro'),
+    birth_year: anVal || (curatedMatch ? (curatedMatch.birth_year || curatedMatch.anoNascimento) : null),
     idade: row.idade || (curatedMatch ? curatedMatch.idade : ''),
     an: anVal || (curatedMatch ? curatedMatch.an : null),
     anoNascimento: anVal || (curatedMatch ? curatedMatch.anoNascimento : null),
+    height: curatedMatch ? (curatedMatch.height || (curatedMatch.alt ? parseInt(String(curatedMatch.alt).replace(/[^\d]/g, ''), 10) : null)) : null,
     alt: curatedMatch ? curatedMatch.alt : null,
     altura: curatedMatch ? curatedMatch.altura : null,
     nacionalidade: row.nacionalidade || (curatedMatch ? curatedMatch.nacionalidade : 'Brasileiro'),
+    youth_club: row.origem || (curatedMatch ? (curatedMatch.youth_club || curatedMatch.clubeFormador) : ''),
     clubeFormador: row.origem || (curatedMatch ? curatedMatch.clubeFormador : ''),
     origem: row.origem || (curatedMatch ? curatedMatch.origem : (isProv ? 'Destaque de Relatório' : 'Base')),
+    loan_details: curatedMatch ? (curatedMatch.loan_details || curatedMatch.emprestimo || null) : null,
+    emprestimo: curatedMatch ? (curatedMatch.emprestimo || curatedMatch.loan_details || null) : null,
     isProvisorio: isProv,
     is_provisorio: isProv,
+    tier: row.nivel || (curatedMatch ? (curatedMatch.tier || curatedMatch.nivel) : (isProv ? '' : 'B')),
     nivel: row.nivel || (curatedMatch ? curatedMatch.nivel : (isProv ? '' : 'B')),
     projecao: curatedMatch ? curatedMatch.projecao : [],
+    tactical_dna: (curatedMatch && curatedMatch.tactical_dna) ? curatedMatch.tactical_dna : (curatedMatch?.caracteristicas || []),
     caracteristicas: (curatedMatch && curatedMatch.caracteristicas && curatedMatch.caracteristicas.length > 0)
       ? curatedMatch.caracteristicas
-      : (isProv ? ['Destaque de Campo'] : []),
+      : (curatedMatch?.tactical_dna || (isProv ? ['Destaque de Campo'] : [])),
     agente: curatedMatch ? curatedMatch.agente : '',
-    contrato: curatedMatch ? curatedMatch.contrato : '',
+    contract_end: curatedMatch ? (curatedMatch.contract_end || curatedMatch.contrato) : '',
+    contrato: curatedMatch ? (curatedMatch.contrato || curatedMatch.contract_end) : '',
+    contract_status: curatedMatch ? (curatedMatch.contract_status || curatedMatch.situacao) : 'OK',
     situacao: curatedMatch ? curatedMatch.situacao : 'OK',
     alerta: curatedMatch ? curatedMatch.alerta : 'OK',
     estimated_salary: row.estimated_salary !== undefined && row.estimated_salary !== null ? Number(row.estimated_salary) : null,

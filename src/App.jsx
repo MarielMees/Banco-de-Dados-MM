@@ -22,7 +22,7 @@ import {
 } from './services/supabaseService'
 import { addToOfflineQueue } from './services/offlineSyncService'
 import { supabase } from './services/supabaseClient'
-import { CURATED_GOALKEEPERS } from './data/curatedGoalkeepers'
+import { ALL_CURATED_PLAYERS } from './data/curatedPlayers'
 import Login from './components/Login'
 import UserBadge from './components/UserBadge'
 import Sidebar from './components/Sidebar'
@@ -38,12 +38,26 @@ function App() {
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed) && parsed.length > 0) {
+          const existingIds = new Set(parsed.map(p => String(p.id)))
+          const existingNames = new Set(parsed.map(p => (p.nome || p.name || '').toLowerCase().trim()))
+          const missingCurated = ALL_CURATED_PLAYERS.filter(cp =>
+            !existingIds.has(String(cp.id)) &&
+            !existingNames.has((cp.nome || cp.name || '').toLowerCase().trim())
+          )
+          if (missingCurated.length > 0) {
+            const combined = [...parsed, ...missingCurated]
+            try {
+              localStorage.setItem('scout_players', JSON.stringify(combined))
+              localStorage.setItem('radar_players', JSON.stringify(combined))
+            } catch (_) {}
+            return combined
+          }
           return parsed
         }
       }
-      return CURATED_GOALKEEPERS
+      return ALL_CURATED_PLAYERS
     } catch (e) {
-      return CURATED_GOALKEEPERS
+      return ALL_CURATED_PLAYERS
     }
   })
   const [isGlobalSearchOpen, setIsGlobalSearchOpen] = useState(false)
@@ -127,19 +141,35 @@ function App() {
 
             const mergedPlayers = remotePlayers.map(rp => {
               const local = Array.isArray(cached) ? cached.find(lp => String(lp.id) === String(rp.id) || (lp.nome && rp.nome && lp.nome.toLowerCase().trim() === rp.nome.toLowerCase().trim())) : null
-              const curated = CURATED_GOALKEEPERS.find(cg => String(cg.id) === String(rp.id) || (cg.nome && rp.nome && cg.nome.toLowerCase().trim() === rp.nome.toLowerCase().trim()))
+              const curated = ALL_CURATED_PLAYERS.find(cg => 
+                String(cg.id) === String(rp.id) || 
+                (cg.nome && rp.nome && cg.nome.toLowerCase().trim() === rp.nome.toLowerCase().trim()) ||
+                (cg.name && rp.nome && cg.name.toLowerCase().trim() === rp.nome.toLowerCase().trim())
+              )
               const source = local || curated
               if (source) {
                 return {
                   ...source,
                   ...rp,
+                  position: rp.position || source.position || 'Zagueiro Destro',
+                  preferred_foot: rp.preferred_foot || source.preferred_foot || 'Destro',
+                  name: rp.name || source.name || rp.nome || source.nome,
+                  birth_year: rp.birth_year || source.birth_year || rp.an || source.an || null,
+                  height: rp.height || source.height || null,
+                  tier: rp.tier || source.tier || rp.nivel || source.nivel || 'B',
+                  contract_status: rp.contract_status || source.contract_status || rp.situacao || source.situacao || 'OK',
+                  current_club: rp.current_club || source.current_club || rp.clubeAtual || source.clubeAtual || '',
+                  loan_details: rp.loan_details || source.loan_details || rp.emprestimo || source.emprestimo || null,
+                  youth_club: rp.youth_club || source.youth_club || rp.clubeFormador || source.clubeFormador || '',
+                  tactical_dna: (rp.tactical_dna && rp.tactical_dna.length > 0) ? rp.tactical_dna : (source.tactical_dna || rp.caracteristicas || source.caracteristicas || []),
+                  contract_end: rp.contract_end || source.contract_end || rp.contrato || source.contrato || null,
                   alt: rp.alt || source.alt || source.altura || null,
                   altura: rp.altura || source.altura || source.alt || null,
                   an: rp.an || source.an || source.anoNascimento || null,
                   anoNascimento: rp.anoNascimento || source.anoNascimento || source.an || null,
-                  contrato: rp.contrato || source.contrato || '',
+                  contrato: rp.contrato || source.contrato || rp.contract_end || source.contract_end || '',
                   agente: rp.agente || source.agente || '',
-                  caracteristicas: (rp.caracteristicas && rp.caracteristicas.length > 0) ? rp.caracteristicas : (source.caracteristicas || []),
+                  caracteristicas: (rp.caracteristicas && rp.caracteristicas.length > 0) ? rp.caracteristicas : (source.caracteristicas || source.tactical_dna || []),
                   projecao: (rp.projecao && rp.projecao.length > 0) ? rp.projecao : (source.projecao || []),
                   clubeFormador: rp.clubeFormador || source.clubeFormador || rp.origem || source.origem || '',
                   situacao: rp.situacao || source.situacao || 'OK',
