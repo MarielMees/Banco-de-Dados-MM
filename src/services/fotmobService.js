@@ -538,8 +538,9 @@ export async function fetchMatchDetails(matchId) {
 
     const pos = getExactPosition(p);
 
+    const pFallbackId = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
     return {
-      id: p.id ? `fotmob-p-${p.id}` : `p-${Math.random().toString(36).substr(2, 7)}`,
+      id: p.id ? `fotmob-p-${p.id}` : `p-${pFallbackId}`,
       apiId: p.id ? String(p.id) : null,
       numero: p.shirtNumber ? String(p.shirtNumber) : '—',
       number: p.shirtNumber ? String(p.shirtNumber) : '—',

@@ -232,8 +232,9 @@ export default function MatchReportModal({
       })
       setTimeout(() => setToastMessage(null), 3000)
     } else {
-      // Cria o registro no banco global
-      const newPlayerId = 'p-' + Date.now() + '-' + Math.floor(Math.random() * 1000)
+      // Cria o registro no banco global (sem dados fictícios)
+      const athleteUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
+      const newPlayerId = 'p-' + Date.now() + '-' + athleteUuid
       const targetTeam = atleta.time === 'visitante' ? awayTeamName : homeTeamName
       const playerPayload = {
         id: newPlayerId,
@@ -241,16 +242,16 @@ export default function MatchReportModal({
         posicao: mapToRadarPosition(atleta.posicao),
         posicaoLabel: atleta.posicao || 'Médio',
         ca: atleta.ca || targetTeam,
-        nivel: 'C',
+        nivel: null,
         status: 'Triagem',
         statusTriagem: 'Em Observação',
         isProvisorio: false,
-        perna: 'Destro',
-        pernaDominante: 'Destro',
-        caracteristicas: ['Em Análise'],
-        notaScout: atleta.nota ? parseFloat(atleta.nota) : 7.0,
+        perna: null,
+        pernaDominante: null,
+        caracteristicas: [],
+        notaScout: atleta.nota ? parseFloat(atleta.nota) : null,
         radarSub23: !!atleta.sub20,
-        observacoes: 'Cadastrado via Relatório de Jogo: ' + partida + ' (' + data + '). Nota Scout: ' + (atleta.nota || '7.0')
+        observacoes: 'Cadastrado via Relatório de Jogo: ' + partida + ' (' + data + ').' + (atleta.nota ? ' Nota Scout: ' + atleta.nota : '')
       }
 
       if (onSavePlayerToRadar) {
@@ -281,7 +282,8 @@ export default function MatchReportModal({
   // AÇÃO 2: Vincular Atleta a uma Lista de Monitoramento (Esteiras)
   const handleAssignToList = (atleta, listKey) => {
     const existingP = findExistingPlayer(atleta)
-    const newPlayerId = existingP ? existingP.id : ('p-' + Date.now() + '-' + Math.floor(Math.random() * 1000))
+    const athleteUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
+    const newPlayerId = existingP ? existingP.id : ('p-' + Date.now() + '-' + athleteUuid)
     const targetTeam = atleta.time === 'visitante' ? awayTeamName : homeTeamName
 
     const isMonitoring = listKey === 'monitoramento'
@@ -302,7 +304,7 @@ export default function MatchReportModal({
       posicao: mapToRadarPosition(atleta.posicao),
       posicaoLabel: atleta.posicao || 'Médio',
       ca: atleta.ca || existingP?.ca || targetTeam,
-      nivel: existingP?.nivel || 'C',
+      nivel: existingP?.nivel || null,
       status: isHotList ? 'Hot List' : (isMonitoring ? 'Monitoramento Ativo' : (existingP?.status || 'Triagem')),
       statusTriagem: statusTriagem,
       monitoramento: isMonitoring || Boolean(existingP?.monitoramento),
@@ -310,7 +312,7 @@ export default function MatchReportModal({
       hotList: isHotList || Boolean(existingP?.hotList),
       timeSombra: isTimeSombra || Boolean(existingP?.timeSombra),
       isProvisorio: false,
-      notaScout: atleta.nota ? parseFloat(atleta.nota) : (existingP?.notaScout || 7.0),
+      notaScout: atleta.nota ? parseFloat(atleta.nota) : (existingP?.notaScout || null),
       observacoes: existingP?.observacoes 
         ? (existingP.observacoes + '\n[Adicionado à lista ' + statusTriagem + ' via ' + partida + ' (' + data + ')]')
         : ('Adicionado à lista ' + statusTriagem + ' via Relatório de Jogo: ' + partida + ' (' + data + ')')

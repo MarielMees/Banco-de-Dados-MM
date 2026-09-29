@@ -43,8 +43,9 @@ export function saveOfflineQueue(queue) {
  */
 export function addToOfflineQueue(type, data) {
   const queue = getOfflineQueue()
+  const queueUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
   const newItem = {
-    id: `offline-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+    id: `offline-${Date.now()}-${queueUuid}`,
     type,
     data,
     timestamp: Date.now(),

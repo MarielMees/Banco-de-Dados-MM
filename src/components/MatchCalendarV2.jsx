@@ -1091,7 +1091,7 @@ export default function MatchCalendarV2({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {upcomingAndLiveMatches.map((match) => {
+              {upcomingAndLiveMatches.map((match, idx) => {
                 const isLive = LIVE_STATUS_CODES.includes(match?.status || match?.fixture?.status?.short);
                 const hasExpressNotes = Boolean(match?.expressNotes);
                 const report = (reports || []).find(r => 
@@ -1120,7 +1120,7 @@ export default function MatchCalendarV2({
                 const cityName = match?.city || match?.fixture?.venue?.city || '';
                 const matchDateText = match?.date || (match?.datetime ? String(match.datetime).split('T')[0] : '');
                 const matchTimeText = match?.time || '—';
-                const mKey = match?.id || match?.fixtureId || match?.fixture?.id || Math.random();
+                const mKey = match?.id || match?.fixtureId || match?.fixture?.id || `match-up-${idx}`;
 
                 return (
                   <div
@@ -1261,7 +1261,7 @@ export default function MatchCalendarV2({
             </div>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-              {finishedMatches.map((match) => {
+              {finishedMatches.map((match, idx) => {
                 const report = (reports || []).find(r => 
                   (r?.fixtureId && String(r.fixtureId) === String(match?.id)) ||
                   (r?.matchId && String(r.matchId) === String(match?.id)) ||
@@ -1285,7 +1285,7 @@ export default function MatchCalendarV2({
                 const venueName = match?.venue || match?.fixture?.venue?.name || 'Estádio a definir';
                 const cityName = match?.city || match?.fixture?.venue?.city || '';
                 const matchDateText = match?.date || (match?.datetime ? String(match.datetime).split('T')[0] : '');
-                const mKey = match?.id || match?.fixtureId || match?.fixture?.id || Math.random();
+                const mKey = match?.id || match?.fixtureId || match?.fixture?.id || `match-fin-${idx}`;
                 const statusShort = match?.statusShort || match?.status || 'FT';
                 const displayStatusText = report?.statusJogo || (statusShort === 'FT' ? "Encerrado (90')" : (match?.statusLong || 'Concluído'));
 

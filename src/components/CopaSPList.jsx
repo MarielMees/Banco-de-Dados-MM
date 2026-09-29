@@ -228,15 +228,15 @@ export default function CopaSPList({
     } catch (e) {}
   }, [copaSelectionData])
 
-  // Form Atleta State
+  // Form Atleta State (sem valores fakes/inventados)
   const [formData, setFormData] = useState({
     nome: '',
     clubeCopaSP: '',
-    anoNascimento: 2006,
+    anoNascimento: '',
     posicaoObservada: 'Centroavante',
-    pe: 'Destro',
-    alt: 180,
-    notaJogo: '7.0',
+    pe: '',
+    alt: '',
+    notaJogo: '',
     destaquePartida: false,
     statusOlhar: 'Interessante',
     observacoes: ''
@@ -274,9 +274,9 @@ export default function CopaSPList({
         id: p.id,
         nome: p.nome,
         clube: p.clubeCopaSP || p.ca || '—',
-        anoNascimento: p.anoNascimento || p.an || 2006,
-        alt: p.alt || 178,
-        pe: p.pe || 'Destro',
+        anoNascimento: p.anoNascimento || p.an || null,
+        alt: p.alt || null,
+        pe: p.pe || null,
         posicao: p.posicaoObservada || 'Centroavante',
         totalJogos: 0,
         somaNotas: 0,
@@ -314,9 +314,9 @@ export default function CopaSPList({
             id: targetId,
             nome: atleta.nome || registered?.nome || 'Atleta',
             clube: atleta.clube || registered?.clubeCopaSP || registered?.ca || '—',
-            anoNascimento: registered?.anoNascimento || registered?.an || 2006,
-            alt: registered?.alt || 178,
-            pe: atleta.pe || registered?.pe || 'Destro',
+            anoNascimento: registered?.anoNascimento || registered?.an || null,
+            alt: registered?.alt || null,
+            pe: atleta.pe || registered?.pe || null,
             posicao: atleta.posicao || registered?.posicaoObservada || 'Centroavante',
             totalJogos: 0,
             somaNotas: 0,
@@ -346,7 +346,7 @@ export default function CopaSPList({
       byPos[posKey].push({
         ...st,
         mediaNota: media,
-        mediaGeral: media > 0 ? media.toFixed(1) : (copaPlayers.find(p => p.id === st.id)?.notaJogo || '7.0'),
+        mediaGeral: media > 0 ? media.toFixed(1) : (copaPlayers.find(p => p.id === st.id)?.notaJogo || '—'),
         estrelas: st.destaquesCount
       })
     })
@@ -362,17 +362,17 @@ export default function CopaSPList({
     return { stats, byPos }
   }, [copaPlayers, copaMatches])
 
-  // Handlers Atletas
+  // Handlers Atletas (sem valores fakes/inventados)
   const handleOpenAddAthlete = () => {
     setEditingPlayer(null)
     setFormData({
       nome: '',
       clubeCopaSP: '',
-      anoNascimento: 2006,
+      anoNascimento: '',
       posicaoObservada: 'Centroavante',
-      pe: 'Destro',
-      alt: 180,
-      notaJogo: '7.0',
+      pe: '',
+      alt: '',
+      notaJogo: '',
       destaquePartida: false,
       statusOlhar: 'Interessante',
       observacoes: ''
@@ -385,11 +385,11 @@ export default function CopaSPList({
     setFormData({
       nome: athlete.nome || '',
       clubeCopaSP: athlete.clubeCopaSP || athlete.ca || '',
-      anoNascimento: athlete.anoNascimento || athlete.an || 2006,
+      anoNascimento: athlete.anoNascimento || athlete.an || '',
       posicaoObservada: athlete.posicaoObservada || 'Centroavante',
-      pe: athlete.pe || 'Destro',
-      alt: athlete.alt || 180,
-      notaJogo: athlete.notaJogo || '7.0',
+      pe: athlete.pe || '',
+      alt: athlete.alt || '',
+      notaJogo: athlete.notaJogo || '',
       destaquePartida: !!athlete.destaquePartida,
       statusOlhar: athlete.statusOlhar || 'Interessante',
       observacoes: athlete.observacoes || ''
@@ -401,25 +401,36 @@ export default function CopaSPList({
     e.preventDefault()
     if (!formData.nome.trim()) return
 
+    const parsedAn = parseInt(formData.anoNascimento, 10)
+    const validAn = (!isNaN(parsedAn) && parsedAn >= 1960 && parsedAn <= new Date().getFullYear()) ? parsedAn : null
+    const parsedAlt = parseInt(formData.alt, 10)
+    const validAlt = (!isNaN(parsedAlt) && parsedAlt > 0) ? parsedAlt : null
+    const validPe = ['Destro', 'Canhoto', 'Ambidestro'].includes(formData.pe) ? formData.pe : null
+
     if (editingPlayer) {
       setCopaPlayers(prev => prev.map(p => {
         if (p.id === editingPlayer.id) {
           return {
             ...p,
             ...formData,
-            anoNascimento: parseInt(formData.anoNascimento, 10) || 2006,
-            an: parseInt(formData.anoNascimento, 10) || 2006,
+            anoNascimento: validAn,
+            an: validAn,
+            alt: validAlt,
+            pe: validPe,
             ca: formData.clubeCopaSP
           }
         }
         return p
       }))
     } else {
+      const athleteUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
       const newAthlete = {
-        id: `copasp_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
+        id: `copasp_${Date.now()}_${athleteUuid}`,
         ...formData,
-        anoNascimento: parseInt(formData.anoNascimento, 10) || 2006,
-        an: parseInt(formData.anoNascimento, 10) || 2006,
+        anoNascimento: validAn,
+        an: validAn,
+        alt: validAlt,
+        pe: validPe,
         ca: formData.clubeCopaSP,
         isSandboxBase: true,
         promovido: false,
@@ -550,20 +561,21 @@ export default function CopaSPList({
               avaliacoes: updatedAvals
             }
           } else {
-            // Atleta novo: auto-cadastro no banco da Copinha
-            const newId = atleta.idAtleta || `copasp_${Date.now()}_${idx}_${Math.random().toString(36).substring(2, 6)}`
+            // Atleta novo: auto-cadastro no banco da Copinha (sem campos inventados)
+            const athleteUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
+            const newId = atleta.idAtleta || `copasp_${Date.now()}_${idx}_${athleteUuid}`
             const newAthlete = {
               id: newId,
               nome: atletaNome,
               clubeCopaSP: atleta.clube || '',
               ca: atleta.clube || '',
-              anoNascimento: 2006,
-              an: 2006,
+              anoNascimento: atleta.anoNascimento || atleta.an || null,
+              an: atleta.anoNascimento || atleta.an || null,
               posicaoObservada: atleta.posicao || 'Centroavante',
-              pe: 'Destro',
-              alt: 180,
-              notaJogo: notaNum.toFixed(1),
-              mediaGeral: notaNum.toFixed(1),
+              pe: atleta.pe || null,
+              alt: atleta.alt || null,
+              notaJogo: !isNaN(notaNum) && notaNum > 0 ? notaNum.toFixed(1) : null,
+              mediaGeral: !isNaN(notaNum) && notaNum > 0 ? notaNum.toFixed(1) : null,
               destaquePartida: isDestaque,
               totalDestaques: isDestaque ? 1 : 0,
               statusOlhar: isDestaque ? 'Prioridade' : 'Interessante',
@@ -605,7 +617,7 @@ export default function CopaSPList({
 
     setPromoteForm({
       posicaoPrincipal: defPos,
-      nivel: 'B',
+      nivel: athlete.nivel || '',
       clubeFormador: athlete.clubeCopaSP || athlete.clube || '',
       observacoesContratuais: ''
     })
@@ -620,20 +632,20 @@ export default function CopaSPList({
       copaSpRefId: promotingPlayer.id,
       nome: promotingPlayer.nome,
       posicao: promoteForm.posicaoPrincipal,
-      an: promotingPlayer.anoNascimento || promotingPlayer.an || 2006,
-      alt: promotingPlayer.alt || 178,
-      pe: promotingPlayer.pe || 'Destro',
-      nivel: promoteForm.nivel || 'B',
-      projecao: 'BR2',
-      nivelFisico: 'Bom',
+      an: promotingPlayer.anoNascimento || promotingPlayer.an || null,
+      alt: promotingPlayer.alt || null,
+      pe: promotingPlayer.pe || null,
+      nivel: promoteForm.nivel || null,
+      projecao: null,
+      nivelFisico: null,
       alerta: 'Base',
       origem: 'Copa SP',
       categoria: 'Sub-20/Base',
       ca: promotingPlayer.clubeCopaSP || promotingPlayer.clube || '',
       clubeFormador: promoteForm.clubeFormador || promotingPlayer.clubeCopaSP || promotingPlayer.clube || '',
-      posSecundaria: '—',
-      caracteristicas: ['Formação de Base', promotingPlayer.posicaoObservada || promotingPlayer.posicao || 'Copa SP'],
-      agente: '—',
+      posSecundaria: null,
+      caracteristicas: ['Formação de Base'],
+      agente: null,
       contrato: promoteForm.observacoesContratuais || '',
       radarSub23: true,
       monitoramento: true,
@@ -1557,6 +1569,7 @@ export default function CopaSPList({
                     onChange={(e) => setFormData({ ...formData, pe: e.target.value })}
                     className="w-full bg-[#131d2e] border border-slate-700/80 rounded-lg px-2 py-2 text-slate-200 text-xs focus:outline-none focus:border-amber-500/80 cursor-pointer"
                   >
+                    <option value="">Não informado</option>
                     <option value="Destro">Destro</option>
                     <option value="Canhoto">Canhoto</option>
                     <option value="Ambidestro">Ambidestro</option>

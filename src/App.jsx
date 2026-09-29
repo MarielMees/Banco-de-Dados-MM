@@ -18,11 +18,13 @@ import {
   deletePlayerFromSupabase,
   fetchMatchReportsFromSupabase,
   upsertMatchReportToSupabase,
-  deleteMatchReportFromSupabase
+  deleteMatchReportFromSupabase,
+  mapSupabaseRowToPlayer
 } from './services/supabaseService'
 import { addToOfflineQueue } from './services/offlineSyncService'
 import { supabase } from './services/supabaseClient'
 import { ALL_CURATED_PLAYERS } from './data/curatedPlayers'
+import { sanitizePlayerProfile } from './utils/playerSanitizer'
 import Login from './components/Login'
 import UserBadge from './components/UserBadge'
 import Sidebar from './components/Sidebar'
@@ -404,13 +406,14 @@ function App() {
 
           if (!existingPlayer) {
             const apiId = atleta.apiId || null
+            const uniqueSuffix = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now().toString(36)
             const newPlayerId = apiId 
               ? `player_api_${apiId}` 
-              : `player_${Date.now()}_${Math.random().toString(36).substr(2, 7)}`
+              : `player_${Date.now()}_${uniqueSuffix}`
 
             const posRaw = atleta.posicao || "A Definir"
             const isCanhoto = posRaw.toLowerCase().includes("canhoto") || posRaw.toLowerCase() === "le" || atleta.pe === "Canhoto" || atleta.pePreferencial === "Canhoto"
-            const pePref = isCanhoto ? "Canhoto" : "Destro"
+            const pePref = isCanhoto ? "Canhoto" : (atleta.pe || atleta.pePreferencial || "Destro")
             const clubeVal = aClube || (atleta.lado === 'visitante' ? (updatedReport.visitante?.nome || updatedReport.timeVisitante || updatedReport.visitante) : (updatedReport.mandante?.nome || updatedReport.timeMandante || updatedReport.mandante)) || '—'
 
             const newPlayerEntry = {
@@ -425,12 +428,12 @@ function App() {
               pe: pePref,
               origem: "Destaque de Relatório",
               isProvisorio: true,
-              nivel: atleta.nivel || "B",
+              nivel: atleta.nivel || null,
               relatoriosCount: 1,
               mediaNotas: atleta.nota || atleta.notaScout || null,
               an: atleta.an || atleta.anoNascimento || null,
               alt: atleta.alt || atleta.altura || null,
-              caracteristicas: Array.isArray(atleta.caracteristicas) ? atleta.caracteristicas : ['Destaque de Campo'],
+              caracteristicas: Array.isArray(atleta.caracteristicas) ? atleta.caracteristicas : [],
               observacao: `Auto-cadastrado como Destaque (★) no confronto: ${updatedReport.partida || ''} (${updatedReport.data || ''}). ${atleta.comentario || atleta.parecerDestaque || ''}`
             }
 
@@ -643,31 +646,81 @@ function App() {
     setCurrentTab('relatorios-jogo')
   }
 
-  const handleSavePlayer = (playerData) => {
+  const handleSavePlayer = async (playerData) => {
+    // 1. Higienização universal estrita
+    const sanitized = sanitizePlayerProfile(playerData)
+    if (!sanitized) {
+      return { success: false, error: 'Dados do atleta inválidos para salvar.' }
+    }
+
+    // 2. Despacho e confirmação com o Supabase
+    let supabaseRes = null
+    if (typeof navigator !== 'undefined' && !navigator.onLine) {
+      addToOfflineQueue('player_update', sanitized)
+      supabaseRes = { success: true, offline: true, data: [sanitized] }
+    } else {
+      supabaseRes = await upsertPlayerToSupabase(sanitized)
+    }
+
+    if (!supabaseRes || !supabaseRes.success) {
+      const errorMsg = supabaseRes?.error || 'Erro desconhecido ao salvar atleta no Supabase.'
+      console.error('[Supabase Save Error]', errorMsg)
+      return { success: false, error: errorMsg }
+    }
+
+    // 3. Montar payload confirmado com o retorno do Supabase (zero cache desatualizado)
+    const remoteRow = Array.isArray(supabaseRes.data) && supabaseRes.data.length > 0 ? supabaseRes.data[0] : null
+    const confirmedPlayer = {
+      ...sanitized,
+      ...(remoteRow ? mapSupabaseRowToPlayer(remoteRow) : {}),
+      // Garantir integridade dos campos sanitizados
+      height: sanitized.height,
+      salary: sanitized.salary,
+      estimated_salary: sanitized.salary,
+      salarioEstimado: sanitized.salary,
+      birth_year: sanitized.birth_year,
+      preferred_foot: sanitized.preferred_foot,
+      tier: sanitized.tier,
+      contract_status: sanitized.contract_status,
+      contract_end: sanitized.contract_end,
+      secondary_position: sanitized.secondary_position,
+      tactical_dna: sanitized.tactical_dna,
+      agent: sanitized.agent,
+      alt: sanitized.alt,
+      altura: sanitized.altura,
+      an: sanitized.an,
+      anoNascimento: sanitized.anoNascimento,
+      pe: sanitized.pe,
+      pePreferencial: sanitized.pePreferencial,
+      nivel: sanitized.nivel,
+      situacao: sanitized.situacao,
+      alerta: sanitized.alerta,
+      contrato: sanitized.contrato,
+      posSecundaria: sanitized.posSecundaria,
+      caracteristicas: sanitized.caracteristicas,
+      agente: sanitized.agente,
+      isProvisorio: false,
+      is_provisorio: false
+    }
+
+    // 4. Atualizar imediatamente o estado local e persistência
     setPlayers(prev => {
-      const existsIndex = prev.findIndex(p => p.id === playerData.id)
+      const existsIndex = prev.findIndex(p => String(p.id) === String(confirmedPlayer.id))
       let updated
       if (existsIndex >= 0) {
         updated = [...prev]
-        // Se o scout salvou a ficha completa pelo PlayerModal, removemos isProvisorio
-        const isStillProvisorio = playerData.isProvisorio === true || playerData.is_provisorio === true ? true : false
-        updated[existsIndex] = {
-          ...playerData,
-          isProvisorio: isStillProvisorio,
-          is_provisorio: isStillProvisorio
-        }
+        updated[existsIndex] = confirmedPlayer
       } else {
-        // Adicionar novo jogador no topo de recentAdditions
         const now = new Date()
         const hours = String(now.getHours()).padStart(2, '0')
         const minutes = String(now.getMinutes()).padStart(2, '0')
         const newRecentItem = {
-          id: playerData.id || Date.now(),
-          nome: playerData.nome,
-          posicao: playerData.posicao,
-          nivel: playerData.nivel,
-          monitoramento: !!playerData.monitoramento,
-          ca: playerData.ca,
+          id: confirmedPlayer.id || Date.now(),
+          nome: confirmedPlayer.nome,
+          posicao: confirmedPlayer.posicao,
+          nivel: confirmedPlayer.nivel,
+          monitoramento: !!confirmedPlayer.monitoramento,
+          ca: confirmedPlayer.ca,
           autor: session?.user?.email || 'dudu@admin.com',
           dataHora: `hoje às ${hours}:${minutes}`
         }
@@ -679,7 +732,7 @@ function App() {
           return nextRecent
         })
 
-        updated = [playerData, ...prev]
+        updated = [confirmedPlayer, ...prev]
       }
 
       try {
@@ -692,20 +745,7 @@ function App() {
       return updated
     })
 
-    // Sincronização em nuvem com a tabela 'players' do Supabase ou enfileira se off-line
-    if (typeof navigator !== 'undefined' && !navigator.onLine) {
-      addToOfflineQueue('player_update', playerData)
-    } else {
-      upsertPlayerToSupabase(playerData)
-        .then(res => {
-          if (!res || !res.success) {
-            addToOfflineQueue('player_update', playerData)
-          }
-        })
-        .catch(() => {
-          addToOfflineQueue('player_update', playerData)
-        })
-    }
+    return { success: true, data: confirmedPlayer }
   }
 
   const handleDeletePlayer = (id) => {

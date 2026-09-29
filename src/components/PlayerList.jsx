@@ -219,9 +219,9 @@ export default function PlayerList({
     setIsPlayerModalOpen(true)
   }
 
-  const handleSave = (playerData) => {
+  const handleSave = async (playerData) => {
     if (onSavePlayer) {
-      onSavePlayer(playerData)
+      return await onSavePlayer(playerData)
     }
   }
 

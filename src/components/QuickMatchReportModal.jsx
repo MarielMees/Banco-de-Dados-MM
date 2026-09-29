@@ -421,7 +421,8 @@ export default function QuickMatchReportModal({
     if (!typedName) return
 
     const teamClub = tipo === 'mandante' ? mandanteClubName : visitanteClubName
-    const tempCoachId = 'coach_temp_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)
+    const coachUuid = (typeof crypto !== 'undefined' && crypto.randomUUID) ? crypto.randomUUID().slice(0, 8) : Date.now()
+    const tempCoachId = 'coach_temp_' + Date.now() + '_' + coachUuid
 
     const entry = {
       id: tempCoachId,

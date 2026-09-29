@@ -40,6 +40,8 @@ import {
   DEFAULT_TIER_SALARIES
 } from '../utils/salaryUtils'
 import { saveShadowTeamToSupabase, upsertPlayerToSupabase } from '../services/supabaseService'
+import PlayerModal from './PlayerModal'
+import { sanitizeSalary } from '../utils/playerSanitizer'
 
 // Definição das 5 formações táticas com coordenadas percentuais (top / left)
 // top: 0% = Ataque, 100% = Gol
@@ -247,6 +249,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   const [isEditingBudgetCeiling, setIsEditingBudgetCeiling] = useState(false)
   const [editingSalary, setEditingSalary] = useState(null) // { posId, posLabel, athleteIndex, athlete, initialSalary }
+  const [editingFullPlayer, setEditingFullPlayer] = useState(null)
   const [salaryInputVal, setSalaryInputVal] = useState('')
   const [positionImpacts, setPositionImpacts] = useState({}) // { [posId]: { diff: number, timestamp: number } }
 
@@ -679,9 +682,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     setSalaryInputVal(formatBRL(curSal, true))
   }
 
-  // Salvar salário editado do atleta
-  const handleSaveAthleteSalary = (posId, athleteIndex, athlete, rawInputVal) => {
-    const numericSalary = parseBRL(rawInputVal)
+  // Salvar salário editado do atleta com sanitização universal e persistência
+  const handleSaveAthleteSalary = async (posId, athleteIndex, athlete, rawInputVal) => {
+    const numericSalary = sanitizeSalary(rawInputVal)
 
     // 1. Atualiza no cenário do Time Sombra ativo
     setShadowTeams(prev => prev.map(team => {
@@ -715,7 +718,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     }
 
     if (onSavePlayer) {
-      onSavePlayer(updatedPlayerData)
+      await onSavePlayer(updatedPlayerData)
     } else {
       try {
         const cached = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
@@ -726,7 +729,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           localStorage.setItem('radar_players', JSON.stringify(updated))
         }
       } catch (e) {}
-      upsertPlayerToSupabase(updatedPlayerData)
+      await upsertPlayerToSupabase(updatedPlayerData)
     }
 
     setEditingSalary(null)
@@ -2122,6 +2125,18 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                   {fullTitular.nivel || '—'}
                                 </span>
                                 <button
+                                  type="button"
+                                  data-export-hide="true"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    setEditingFullPlayer(fullTitular)
+                                  }}
+                                  title="Editar perfil completo do atleta"
+                                  className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-amber-400 transition-opacity cursor-pointer ml-0.5"
+                                >
+                                  <Pencil className="w-2.5 h-2.5" />
+                                </button>
+                                <button
                                   data-export-hide="true"
                                   onClick={(e) => {
                                     e.stopPropagation()
@@ -2249,6 +2264,18 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               <span className={`text-[8px] font-bold px-1 rounded border leading-tight ${getNivelStyle(fullPlayer.nivel)}`}>
                                 {fullPlayer.nivel || '—'}
                               </span>
+                              <button
+                                type="button"
+                                data-export-hide="true"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  setEditingFullPlayer(fullPlayer)
+                                }}
+                                title="Editar perfil completo do atleta"
+                                className="opacity-0 group-hover/row:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity cursor-pointer ml-0.5"
+                              >
+                                <Pencil className="w-2.5 h-2.5" />
+                              </button>
                               <button
                                 data-export-hide="true"
                                 onClick={(e) => {
@@ -2846,6 +2873,63 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
             </form>
           </div>
         </div>
+      )}
+
+      {/* Modal Completo de Edição de Atleta com Sanitização Rigorosa */}
+      {editingFullPlayer && (
+        <PlayerModal
+          isOpen={Boolean(editingFullPlayer)}
+          onClose={() => setEditingFullPlayer(null)}
+          onSave={async (savedPlayerData) => {
+            let result = null
+            if (onSavePlayer) {
+              result = await onSavePlayer(savedPlayerData)
+            } else {
+              try {
+                const cached = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
+                if (cached) {
+                  const list = JSON.parse(cached)
+                  const updated = list.map(p => String(p.id) === String(savedPlayerData.id) ? { ...p, ...savedPlayerData } : p)
+                  localStorage.setItem('scout_players', JSON.stringify(updated))
+                  localStorage.setItem('radar_players', JSON.stringify(updated))
+                }
+              } catch (e) {}
+              result = await upsertPlayerToSupabase(savedPlayerData)
+            }
+
+            // Sincroniza atleta atualizado nas escalações do Time Sombra
+            setShadowTeams(prev => prev.map(team => {
+              let changed = false
+              const nextEscalacao = { ...team.escalacao }
+              Object.keys(nextEscalacao).forEach(posKey => {
+                const list = nextEscalacao[posKey] || []
+                const updatedList = list.map(item => {
+                  if (String(item.id) === String(savedPlayerData.id) || (item.nome && item.nome === savedPlayerData.nome)) {
+                    changed = true
+                    return {
+                      ...item,
+                      ...savedPlayerData
+                    }
+                  }
+                  return item
+                })
+                if (changed) {
+                  nextEscalacao[posKey] = updatedList
+                }
+              })
+              if (changed) {
+                const updatedTeam = { ...team, escalacao: nextEscalacao }
+                saveShadowTeamToSupabase(updatedTeam)
+                return updatedTeam
+              }
+              return team
+            }))
+
+            setEditingFullPlayer(null)
+            return result
+          }}
+          playerToEdit={editingFullPlayer}
+        />
       )}
     </div>
   )

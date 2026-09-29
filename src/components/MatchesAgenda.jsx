@@ -944,7 +944,7 @@ function MatchesAgendaInternal({
                   <span>Jogos Arquivados ({archivedMatches.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {archivedMatches.map((match) => {
+                  {archivedMatches.map((match, idx) => {
                     const linkedReport = (localReports || []).find(r => 
                       (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.fixtureId)) ||
                       (r?.matchId && String(r.matchId) === String(match?.id || match?.fixtureId)) ||
@@ -963,7 +963,7 @@ function MatchesAgendaInternal({
 
                     return (
                       <div
-                        key={match?.id || Math.random().toString(36).substr(2, 7)}
+                        key={match?.id || `arch-m-${idx}`}
                         className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                       >
                         <div>
@@ -1065,7 +1065,7 @@ function MatchesAgendaInternal({
                   </div>
                 )}
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {filteredReports.map((report) => {
+                  {filteredReports.map((report, idx) => {
                     const homeName = report?.mandante?.nome || report?.homeTeam || report?.partida?.split(' x ')?.[0] || 'Mandante';
                     const awayName = report?.visitante?.nome || report?.awayTeam || report?.partida?.split(' x ')?.[1] || 'Visitante';
                     const homeScore = report?.placarObj?.mandante ?? report?.placarMandante ?? report?.homeScore ?? (report?.placar?.split(' x ')?.[0] ?? 0);
@@ -1075,7 +1075,7 @@ function MatchesAgendaInternal({
 
                     return (
                       <div
-                        key={report.id || `rep-${Math.random()}`}
+                        key={report.id || `rep-done-${idx}`}
                         className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                       >
                         <div>
@@ -1206,7 +1206,7 @@ function MatchesAgendaInternal({
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-            {scheduledMatches.map((match) => {
+            {scheduledMatches.map((match, idx) => {
               const isLive = LIVE_STATUSES.includes((match?.status || '').toLowerCase()) || LIVE_STATUSES.includes((match?.statusShort || '').toLowerCase());
 
               const linkedReport = (localReports || []).find(r => 
@@ -1228,7 +1228,7 @@ function MatchesAgendaInternal({
 
               return (
                 <div 
-                  key={match?.id || match?.partida_id || Math.random().toString(36).substr(2, 7)}
+                  key={match?.id || match?.partida_id || `match-sched-${idx}`}
                   className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                 >
                   <div>
@@ -1364,9 +1364,9 @@ function MatchesAgendaInternal({
                   <span>Relatórios Concluídos ({filteredReports.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {filteredReports.map(report => (
+                  {filteredReports.map((report, idx) => (
                     <div
-                      key={report.id || `rep-${Math.random()}`}
+                      key={report.id || `rep-fin-${idx}`}
                       className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-emerald-500/40 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                     >
                       <div>
@@ -1418,7 +1418,7 @@ function MatchesAgendaInternal({
                   <span>Jogos Arquivados ({archivedMatches.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {archivedMatches.map(match => {
+                  {archivedMatches.map((match, idx) => {
                     const linkedReport = (localReports || []).find(r => 
                       (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.fixtureId)) ||
                       (r?.matchId && String(r.matchId) === String(match?.id || match?.fixtureId)) ||
@@ -1434,7 +1434,7 @@ function MatchesAgendaInternal({
 
                     return (
                     <div
-                      key={match?.id || Math.random()}
+                      key={match?.id || `archived-m-${idx}`}
                       className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                     >
                       <div>
@@ -1508,7 +1508,7 @@ function MatchesAgendaInternal({
                   <span>Próximos Confrontos Agendados ({scheduledMatches.length})</span>
                 </div>
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                  {scheduledMatches.map(match => {
+                  {scheduledMatches.map((match, idx) => {
                     const linkedReport = (localReports || []).find(r => 
                       (r?.fixtureId && String(r.fixtureId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
                       (r?.matchId && String(r.matchId) === String(match?.id || match?.partida_id || match?.fixtureId)) ||
@@ -1525,7 +1525,7 @@ function MatchesAgendaInternal({
 
                     return (
                     <div
-                      key={match?.id || Math.random()}
+                      key={match?.id || `sched-m-${idx}`}
                       className="bg-slate-900/90 hover:bg-slate-900 border border-slate-800 hover:border-slate-700/80 rounded-2xl p-4 transition-all duration-200 flex flex-col justify-between group shadow-lg shadow-black/20"
                     >
                       <div>
