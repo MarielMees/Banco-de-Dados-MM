@@ -77,9 +77,9 @@ export const parseBRL = (input) => {
  * Obtém a estimativa salarial padrão de mercado baseada no Nível / Tier do atleta
  */
 export const getDefaultEstimatedSalary = (nivel) => {
-  if (!nivel) return 40000
+  if (!nivel) return 0
   const key = String(nivel).toUpperCase().trim()
-  return DEFAULT_TIER_SALARIES[key] || 35000
+  return DEFAULT_TIER_SALARIES[key] || 0
 }
 
 /**
@@ -87,10 +87,17 @@ export const getDefaultEstimatedSalary = (nivel) => {
  * Prioridade:
  * 1. Campo explícito no próprio objeto (estimated_salary ou salarioEstimado)
  * 2. Campo no registro correspondente da lista de players
- * 3. Estimativa padrão por Tier
+ * 3. Estimativa padrão por Tier (se houver tier definido)
  */
 export const getAthleteSalary = (athlete, playersList = []) => {
   if (!athlete) return 0
+
+  if (
+    athlete.salaryCleared &&
+    (athlete.estimated_salary === '' || athlete.estimated_salary === null || athlete.estimated_salary === 0)
+  ) {
+    return 0
+  }
 
   // 1. No próprio objeto
   if (athlete.estimated_salary !== undefined && athlete.estimated_salary !== null && athlete.estimated_salary !== '') {
@@ -102,10 +109,15 @@ export const getAthleteSalary = (athlete, playersList = []) => {
     if (!isNaN(num) && num >= 0) return num
   }
 
+  // Se for linha em branco (sem nome e sem id vinculado), salário é 0
+  if (!athlete.nome?.trim() && !athlete.id) {
+    return 0
+  }
+
   // 2. Busca na lista de atletas cadastrados
   if (playersList && playersList.length > 0) {
     const match = playersList.find(p =>
-      String(p.id) === String(athlete.id) ||
+      (athlete.id && String(p.id) === String(athlete.id)) ||
       (p.nome && athlete.nome && p.nome.toLowerCase().trim() === athlete.nome.toLowerCase().trim())
     )
     if (match) {
@@ -117,10 +129,14 @@ export const getAthleteSalary = (athlete, playersList = []) => {
         const num = parseBRL(match.salarioEstimado)
         if (!isNaN(num) && num >= 0) return num
       }
+      if (match.salary !== undefined && match.salary !== null && match.salary !== '') {
+        const num = parseBRL(match.salary)
+        if (!isNaN(num) && num >= 0) return num
+      }
     }
   }
 
-  // 3. Fallback de mercado por Tier
+  // 3. Fallback de mercado por Tier (apenas se o atleta tiver nível definido)
   return getDefaultEstimatedSalary(athlete.nivel)
 }
 
@@ -135,15 +151,16 @@ export const isAthleteSalaryCustom = (athlete, playersList = []) => {
   if (athlete.salarioEstimado !== undefined && athlete.salarioEstimado !== null && athlete.salarioEstimado !== '') {
     return true
   }
-  if (playersList && playersList.length > 0) {
+  if (playersList && playersList.length > 0 && (athlete.id || athlete.nome?.trim())) {
     const match = playersList.find(p =>
-      String(p.id) === String(athlete.id) ||
+      (athlete.id && String(p.id) === String(athlete.id)) ||
       (p.nome && athlete.nome && p.nome.toLowerCase().trim() === athlete.nome.toLowerCase().trim())
     )
     if (match) {
       return Boolean(
         (match.estimated_salary !== undefined && match.estimated_salary !== null && match.estimated_salary !== '') ||
-        (match.salarioEstimado !== undefined && match.salarioEstimado !== null && match.salarioEstimado !== '')
+        (match.salarioEstimado !== undefined && match.salarioEstimado !== null && match.salarioEstimado !== '') ||
+        (match.salary !== undefined && match.salary !== null && match.salary !== '')
       )
     }
   }
@@ -151,15 +168,16 @@ export const isAthleteSalaryCustom = (athlete, playersList = []) => {
 }
 
 /**
- * Calcula a folha projetada atual com base no escopo:
- * - 'TITULARES': Soma exclusivamente o atleta ativo/selecionado em cada uma das 11 posições.
- * - 'COMPLETO': Soma todos os atletas presentes no campograma (1ª, 2ª e 3ª opções) com salário.
+ * Calcula a folha projetada atual respeitando o Checkbox 'Ativo na Simulação' (is_simulated_active):
+ * - Ignora imediatamente qualquer linha com is_simulated_active === false.
+ * - 'TITULARES': Soma o 1º atleta ativo em cada uma das 11 posições.
+ * - 'COMPLETO': Soma todos os atletas ativos na simulação no campograma/tabela.
  */
 export const calculateTeamPayroll = (
   formationPositions = [],
   slotsData = {},
   playersList = [],
-  scope = 'TITULARES'
+  scope = 'COMPLETO'
 ) => {
   let folhaProjetada = 0
   let startersCount = 0
@@ -168,15 +186,24 @@ export const calculateTeamPayroll = (
   let customSalaryCount = 0
   const details = []
 
-  const isFullRoster = scope === 'COMPLETO'
+  const isFullRoster = scope !== 'TITULARES'
 
   formationPositions.forEach(pos => {
-    const list = slotsData[pos.id] || []
-    if (list.length === 0) return
+    const rawList = slotsData[pos.id] || []
+    // Filtra apenas atletas marcados como Ativo na Simulação (is_simulated_active !== false)
+    // e que tenham nome preenchido ou valor de salário
+    const activeList = rawList.filter(
+      slot =>
+        slot &&
+        slot.is_simulated_active !== false &&
+        Boolean(slot.nome?.trim() || slot.id || getAthleteSalary(slot, playersList) > 0)
+    )
+
+    if (activeList.length === 0) return
 
     if (!isFullRoster) {
-      // Modo Titulares (11)
-      const titular = list[0]
+      // Modo 1º Ativo por Posição (11)
+      const titular = activeList[0]
       if (titular) {
         startersCount += 1
         totalAthletesCount += 1
@@ -195,8 +222,8 @@ export const calculateTeamPayroll = (
         })
       }
     } else {
-      // Modo Elenco Completo (1ª, 2ª e 3ª opções)
-      list.forEach((athlete, index) => {
+      // Modo Simulação Completa (todos os atletas com Ativo na Simulação = true)
+      activeList.forEach((athlete, index) => {
         if (!athlete) return
         totalAthletesCount += 1
         if (index === 0) startersCount += 1
@@ -230,10 +257,7 @@ export const calculateTeamPayroll = (
 }
 
 /**
- * Formata a variação/impacto salarial ao trocar de titular na posição
- * diff = novoSalario - antigoSalario
- * diff < 0: economia (Verde, ↓ -R$ X)
- * diff > 0: aumento (Vermelho, ↑ +R$ X)
+ * Formata a variação/impacto salarial
  */
 export const formatSalaryDiff = (diff) => {
   if (diff === null || diff === undefined || isNaN(diff) || diff === 0) {
@@ -246,7 +270,6 @@ export const formatSalaryDiff = (diff) => {
   }
 
   if (diff < 0) {
-    // Redução de custo / economia
     const abs = Math.abs(diff)
     return {
       text: `↓ -${formatBRL(abs, true)}`,
@@ -256,7 +279,6 @@ export const formatSalaryDiff = (diff) => {
     }
   }
 
-  // Aumento de custo
   return {
     text: `↑ +${formatBRL(diff, true)}`,
     compactText: `↑ +${formatCompactBRL(diff)}`,
@@ -266,15 +288,18 @@ export const formatSalaryDiff = (diff) => {
 }
 
 /**
- * Calcula métricas salariais consolidadas para uma vaga/posição do campograma:
- * - Custo do titular ativo
- * - Custo dos suplentes/reservas
- * - Custo total da posição
- * - Média salarial ponderada da posição (soma dos salários / atletas com salário)
- * - Indicador de inversão salarial (caso a 2ª opção ganhe estritamente mais que o 1º titular)
+ * Calcula métricas salariais consolidadas para uma vaga/posição do campograma
+ * considerando apenas os slots ativos na simulação (is_simulated_active !== false).
  */
 export const calculatePositionSalaryMetrics = (positionSlots = [], playersList = []) => {
-  if (!positionSlots || positionSlots.length === 0) {
+  const activeSlots = (positionSlots || []).filter(
+    s =>
+      s &&
+      s.is_simulated_active !== false &&
+      Boolean(s.nome?.trim() || s.id || getAthleteSalary(s, playersList) > 0)
+  )
+
+  if (activeSlots.length === 0) {
     return {
       titularSalary: 0,
       reservasSalary: 0,
@@ -287,8 +312,8 @@ export const calculatePositionSalaryMetrics = (positionSlots = [], playersList =
     }
   }
 
-  const titular = positionSlots[0] || null
-  const alternates = positionSlots.slice(1)
+  const titular = activeSlots[0] || null
+  const alternates = activeSlots.slice(1)
   const titularSalary = titular ? getAthleteSalary(titular, playersList) : 0
 
   let reservasSalary = 0
@@ -303,12 +328,9 @@ export const calculatePositionSalaryMetrics = (positionSlots = [], playersList =
     if (sal > 0) countWithSalary += 1
   })
 
-  // Se houver apenas 1 atleta com salário, exibe o valor dele; se 2 ou mais, divide pelo número de atletas preenchidos com salário
   const avgSalary = countWithSalary > 0 ? Math.round(totalSalary / countWithSalary) : (totalSalary > 0 ? totalSalary : 0)
-
-  // Inversão salarial: a 2ª opção cadastrada (1º suplente direto) possui salário estritamente superior ao titular ativo
   const secondSalary = alternates.length > 0 && alternates[0] ? getAthleteSalary(alternates[0], playersList) : 0
-  const hasSalaryInversion = titularSalary > 0 && secondSalary > titularSalary
+  const hasSalaryInversion = false
 
   return {
     titularSalary,
@@ -318,7 +340,7 @@ export const calculatePositionSalaryMetrics = (positionSlots = [], playersList =
     countWithSalary,
     hasSalaryInversion,
     secondSalary,
-    optionsCount: positionSlots.length
+    optionsCount: activeSlots.length
   }
 }
 

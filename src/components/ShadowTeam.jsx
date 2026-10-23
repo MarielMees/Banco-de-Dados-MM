@@ -22,7 +22,11 @@ import {
   Percent,
   Sparkles,
   Eye,
-  EyeOff
+  EyeOff,
+  Trash2,
+  Globe,
+  UserCheck,
+  Target
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import { toPng } from 'html-to-image'
@@ -128,7 +132,7 @@ const FORMATIONS_CONFIG = {
   }
 }
 
-// Dados mockados iniciais para os cenários padrão (campinho 100% VAZIO) com tetos orçamentários
+// Dados iniciais para os cenários padrão (campinho 100% VAZIO) com tetos orçamentários
 const INITIAL_SHADOW_TEAMS = [
   {
     id: 'serie-a',
@@ -183,7 +187,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     return INITIAL_SHADOW_TEAMS
   })
 
-  // Persistir alterações no localStorage e sincronizar em nuvem
+  // Persistir alterações no localStorage
   useEffect(() => {
     if (shadowTeams && shadowTeams.length > 0) {
       try {
@@ -196,10 +200,14 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   const [activeTeamId, setActiveTeamId] = useState(() => {
     try {
+      const savedActiveId = localStorage.getItem('radar_shadow_active_team_id')
       const saved = localStorage.getItem('radar_shadow_teams')
       if (saved) {
         const parsed = JSON.parse(saved)
         if (Array.isArray(parsed) && parsed.length > 0) {
+          if (savedActiveId && parsed.some(t => t.id === savedActiveId)) {
+            return savedActiveId
+          }
           return parsed[0].id
         }
       }
@@ -208,11 +216,24 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     }
     return 'serie-a'
   })
+
+  useEffect(() => {
+    if (activeTeamId) {
+      try {
+        localStorage.setItem('radar_shadow_active_team_id', activeTeamId)
+      } catch (e) {}
+    }
+  }, [activeTeamId])
+
   const [assigningPos, setAssigningPos] = useState(null)
   const [playerSearch, setPlayerSearch] = useState('')
   const [playerFilterTab, setPlayerFilterTab] = useState('SUGERIDOS') // 'SUGERIDOS' | 'TODOS'
   const [isExportingPdf, setIsExportingPdf] = useState(false)
   const pitchRef = useRef(null)
+
+  // Controle de autocomplete inline na Tabela de Gestão de Elenco & Simulação
+  // rowKey: `${posId}-${slotIdx}`
+  const [activeRowAutocomplete, setActiveRowAutocomplete] = useState(null)
 
   // Estado de Drag and Drop
   // draggedItem: { posId: string, index: number, player: object }
@@ -282,10 +303,33 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const customPositions = activeTeam.customPositions || {}
   const activeFormation = FORMATIONS_CONFIG[selectedFormation] || FORMATIONS_CONFIG['4-3-3']
 
-  // Base do cálculo de métricas físicas, etárias e orçamentárias ('TITULARES' | 'COMPLETO')
-  const [metricsScope, setMetricsScope] = useState('TITULARES')
+  // Resolve um slot mesclando dados da base (se houver id) com edições em tempo real da linha/slot
+  const resolveSlotAthlete = (slot) => {
+    if (!slot) return null
+    const base = slot.id
+      ? players.find(p => String(p.id) === String(slot.id))
+      : null
+    return {
+      ...(base || {}),
+      ...slot,
+      nome: slot.nome !== undefined ? slot.nome : (base?.nome || ''),
+      ca: slot.ca !== undefined ? slot.ca : (slot.clube !== undefined ? slot.clube : (base?.ca || base?.clube || '')),
+      clube: slot.clube !== undefined ? slot.clube : (slot.ca !== undefined ? slot.ca : (base?.clube || base?.ca || '')),
+      alt: slot.alt !== undefined ? slot.alt : (slot.altura !== undefined ? slot.altura : (base?.alt ?? base?.altura ?? '')),
+      altura: slot.altura !== undefined ? slot.altura : (slot.alt !== undefined ? slot.alt : (base?.altura ?? base?.alt ?? '')),
+      an: slot.an !== undefined ? slot.an : (slot.anoNascimento !== undefined ? slot.anoNascimento : (base?.an ?? base?.anoNascimento ?? '')),
+      anoNascimento: slot.anoNascimento !== undefined ? slot.anoNascimento : (slot.an !== undefined ? slot.an : (base?.anoNascimento ?? base?.an ?? '')),
+      nivel: slot.nivel !== undefined ? slot.nivel : (base?.nivel ?? null),
+      is_own_player: Boolean(slot.is_own_player),
+      is_simulated_active: slot.is_simulated_active !== false,
+      is_foreign: Boolean(slot.is_foreign !== undefined ? slot.is_foreign : base?.is_foreign)
+    }
+  }
 
-  // Métricas e Cálculos Financeiros em Tempo Real (unificados com metricsScope)
+  // Base do cálculo de métricas físicas, etárias e orçamentárias ('COMPLETO' considera todas as linhas ativas na simulação)
+  const [metricsScope, setMetricsScope] = useState('COMPLETO')
+
+  // Métricas e Cálculos Financeiros em Tempo Real (unificados com metricsScope e is_simulated_active)
   const budgetCeiling = activeTeam.budget_ceiling !== undefined && activeTeam.budget_ceiling !== null
     ? Number(activeTeam.budget_ceiling)
     : 2500000
@@ -303,7 +347,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const handleFormationChange = (fmt) => {
     setShadowTeams(prev => prev.map(team => {
       if (team.id === activeTeam.id) {
-        return { ...team, formacao: fmt }
+        const updated = { ...team, formacao: fmt }
+        saveShadowTeamToSupabase(updated)
+        return updated
       }
       return team
     }))
@@ -315,6 +361,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       if (team.id === activeTeam.id) {
         const updated = { ...team }
         delete updated.customPositions
+        saveShadowTeamToSupabase(updated)
         return updated
       }
       return team
@@ -325,31 +372,73 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const filledCount = useMemo(() => {
     return activeFormation.positions.filter(pos => {
       const list = slotsData[pos.id] || []
-      return list.length > 0
+      return list.some(s => s && s.is_simulated_active !== false && (s.nome?.trim() || s.id))
     }).length
   }, [activeFormation, slotsData])
 
-  // Cálculo das métricas de Idade e Altura
-  const teamMetrics = useMemo(() => {
+  // Extrai idade e ano de nascimento a partir de qualquer formato (ex: 1998, '98, ou idade direta 26)
+  const extractAgeAndBirthYear = (athlete) => {
+    if (!athlete) return { age: null, birthYear: null }
     const currentYear = new Date().getFullYear()
+    const rawVal = athlete.an !== undefined && athlete.an !== ''
+      ? athlete.an
+      : (athlete.anoNascimento !== undefined && athlete.anoNascimento !== '' ? athlete.anoNascimento : athlete.idade)
+    if (rawVal === undefined || rawVal === null || String(rawVal).trim() === '') {
+      return { age: null, birthYear: null }
+    }
+    const num = parseInt(String(rawVal).replace(/\D/g, ''), 10)
+    if (isNaN(num) || num <= 0) return { age: null, birthYear: null }
+
+    // Caso tenha digitado a idade diretamente (ex: 14 a 55)
+    if (num >= 14 && num <= 55) {
+      return { age: num, birthYear: currentYear - num }
+    }
+    // Caso tenha digitado ano com 4 dígitos (ex: 1997, 2004)
+    if (num >= 1950 && num <= currentYear) {
+      const age = currentYear - num
+      return { age: age >= 14 && age <= 55 ? age : null, birthYear: num }
+    }
+    // Caso tenha digitado ano com 2 dígitos (ex: 98, 04)
+    if (num < 100) {
+      const fullYear = num > 40 ? 1900 + num : 2000 + num
+      const age = currentYear - fullYear
+      return { age: age >= 14 && age <= 55 ? age : null, birthYear: fullYear }
+    }
+    return { age: null, birthYear: null }
+  }
+
+  // Cálculo das métricas de Idade, Altura, Elenco Atual vs Alvos e Estrangeiros (respeitando is_simulated_active)
+  const teamMetrics = useMemo(() => {
     const targetAthletes = []
+    let activeOwnPlayersCount = 0
+    let activeTargetsCount = 0
+    let activeForeignersCount = 0
 
     activeFormation.positions.forEach(pos => {
       const currentSlots = slotsData[pos.id] || []
       if (currentSlots.length === 0) return
 
-      if (metricsScope === 'TITULARES') {
-        const titular = currentSlots[0]
-        if (titular) {
-          const full = players.find(p => p.id === titular.id) || titular
-          targetAthletes.push(full)
+      const activeSlots = currentSlots.filter(s => s && s.is_simulated_active !== false)
+
+      const slotsToProcess = metricsScope === 'TITULARES'
+        ? (activeSlots[0] ? [activeSlots[0]] : [])
+        : activeSlots
+
+      slotsToProcess.forEach(slot => {
+        const full = resolveSlotAthlete(slot)
+        if (!full) return
+        // Ignora linhas em branco sem nome e sem id nas contagens e médias
+        if (!full.nome?.trim() && !full.id) return
+        targetAthletes.push(full)
+        if (full.is_own_player) {
+          activeOwnPlayersCount += 1
+        } else {
+          activeTargetsCount += 1
         }
-      } else {
-        currentSlots.forEach(slot => {
-          const full = players.find(p => p.id === slot.id) || slot
-          targetAthletes.push(full)
-        })
-      }
+        if (full.is_foreign) {
+          activeForeignersCount += 1
+        }
+      })
     })
 
     // 1. Média de Idade
@@ -357,21 +446,10 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     let countAge = 0
 
     targetAthletes.forEach(athlete => {
-      const rawAn = athlete.an || athlete.anoNascimento
-      if (rawAn) {
-        let numAn = parseInt(String(rawAn).trim(), 10)
-        if (!isNaN(numAn)) {
-          if (numAn < 100) {
-            numAn = numAn > 30 ? 1900 + numAn : 2000 + numAn
-          }
-          if (numAn > 1900 && numAn <= currentYear) {
-            const age = currentYear - numAn
-            if (age >= 14 && age <= 50) {
-              totalAge += age
-              countAge += 1
-            }
-          }
-        }
+      const { age } = extractAgeAndBirthYear(athlete)
+      if (age !== null && age >= 14 && age <= 55) {
+        totalAge += age
+        countAge += 1
       }
     })
 
@@ -382,12 +460,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     let countHeight = 0
 
     targetAthletes.forEach(athlete => {
-      const rawAlt = athlete.alt || athlete.altura
-      if (rawAlt) {
+      const rawAlt = athlete.alt !== undefined && athlete.alt !== '' ? athlete.alt : athlete.altura
+      if (rawAlt !== undefined && rawAlt !== null && String(rawAlt).trim() !== '') {
         const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
         if (!isNaN(numAlt) && numAlt > 0) {
           const cm = numAlt < 3 ? Math.round(numAlt * 100) : Math.round(numAlt)
-          if (cm >= 150 && cm <= 220) {
+          if (cm >= 140 && cm <= 230) {
             totalHeight += cm
             countHeight += 1
           }
@@ -402,22 +480,113 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       countAge,
       avgHeight,
       countHeight,
-      totalConsidered: targetAthletes.length
+      totalConsidered: targetAthletes.length,
+      activeOwnPlayersCount,
+      activeTargetsCount,
+      activeForeignersCount
     }
   }, [activeFormation, slotsData, players, metricsScope])
 
-  // Desescalar atleta do cenário ativo
+  // Adicionar nova linha em branco sincronizada (Tabela ⇄ Campograma)
+  const handleAddEmptySlot = (posId) => {
+    const newSlot = {
+      slotId: `slot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+      id: null,
+      nome: '',
+      nivel: null,
+      ca: '',
+      clube: '',
+      an: '',
+      anoNascimento: '',
+      idade: '',
+      alt: '',
+      altura: '',
+      estimated_salary: null,
+      salarioEstimado: null,
+      is_own_player: false,
+      is_simulated_active: true,
+      is_foreign: false
+    }
+
+    setShadowTeams(prev => prev.map(team => {
+      if (team.id === activeTeam.id) {
+        const currentList = team.escalacao[posId] || []
+        const updatedTeam = {
+          ...team,
+          escalacao: {
+            ...team.escalacao,
+            [posId]: [...currentList, newSlot]
+          }
+        }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
+      }
+      return team
+    }))
+  }
+
+  // Atualizar qualquer campo de um slot em tempo real (Tabela ⇄ Campograma)
+  const handleUpdateSlotField = (posId, slotIndex, fieldUpdates) => {
+    setShadowTeams(prev => prev.map(team => {
+      if (team.id === activeTeam.id) {
+        const currentList = [...(team.escalacao[posId] || [])]
+        if (slotIndex < 0 || slotIndex >= currentList.length) return team
+        const existingSlot = currentList[slotIndex] || {}
+        currentList[slotIndex] = {
+          ...existingSlot,
+          ...fieldUpdates
+        }
+        const updatedTeam = {
+          ...team,
+          escalacao: {
+            ...team.escalacao,
+            [posId]: currentList
+          }
+        }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
+      }
+      return team
+    }))
+  }
+
+  // Selecionar um jogador do banco (scout_players) a partir do autocomplete da linha na tabela
+  const handleSelectDatabasePlayerForSlot = (posId, slotIndex, dbPlayer) => {
+    if (!dbPlayer) return
+    const salaryVal = getAthleteSalary(dbPlayer, players)
+    handleUpdateSlotField(posId, slotIndex, {
+      id: dbPlayer.id,
+      nome: dbPlayer.nome || '',
+      nivel: dbPlayer.nivel || null,
+      ca: dbPlayer.ca || dbPlayer.clube || '',
+      clube: dbPlayer.clube || dbPlayer.ca || '',
+      an: dbPlayer.an || dbPlayer.anoNascimento || '',
+      anoNascimento: dbPlayer.anoNascimento || dbPlayer.an || '',
+      alt: dbPlayer.alt || dbPlayer.altura || '',
+      altura: dbPlayer.altura || dbPlayer.alt || '',
+      posicaoOriginal: dbPlayer.posicao || '',
+      estimated_salary: salaryVal > 0 ? salaryVal : null,
+      salarioEstimado: salaryVal > 0 ? salaryVal : null,
+      salaryCleared: false,
+      is_foreign: Boolean(dbPlayer.is_foreign)
+    })
+    setActiveRowAutocomplete(null)
+  }
+
+  // Desescalar / excluir linha de atleta do cenário ativo (Tabela ⇄ Campograma)
   const handleRemovePlayer = (posId, index) => {
     setShadowTeams(prev => prev.map(team => {
       if (team.id === activeTeam.id) {
         const currentList = team.escalacao[posId] || []
-        return {
+        const updatedTeam = {
           ...team,
           escalacao: {
             ...team.escalacao,
             [posId]: currentList.filter((_, i) => i !== index)
           }
         }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
       }
       return team
     }))
@@ -469,52 +638,41 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         const escalacao = { ...team.escalacao }
         const sourceList = [...(escalacao[sourcePosId] || [])]
 
-        // Cenário A: Mesma posição (reordenação / troca de hierarquia)
+        // Cenário A: Mesma posição (reordenação)
         if (sourcePosId === targetPosId) {
           if (targetIndex !== null && targetIndex < sourceList.length) {
-            // Troca os dois de lugar (inversão)
             const temp = sourceList[sourceIndex]
             sourceList[sourceIndex] = sourceList[targetIndex]
             sourceList[targetIndex] = temp
           } else {
-            // Moveu para o final da lista da mesma posição
             const [moved] = sourceList.splice(sourceIndex, 1)
             sourceList.push(moved)
           }
           escalacao[sourcePosId] = sourceList
-          return { ...team, escalacao }
+          const updatedTeam = { ...team, escalacao }
+          saveShadowTeamToSupabase(updatedTeam)
+          return updatedTeam
         }
 
-        // Cenário B: Entre posições diferentes
+        // Cenário B: Entre posições diferentes (sem limite fixo de 5 atletas)
         const targetList = [...(escalacao[targetPosId] || [])]
         const [movedAthlete] = sourceList.splice(sourceIndex, 1)
 
-        // Se o atleta já estiver na posição alvo de alguma forma, cancela para não duplicar
-        if (targetList.some(p => p.id === movedAthlete.id)) {
+        if (movedAthlete.id && targetList.some(p => p.id && String(p.id) === String(movedAthlete.id))) {
           return team
         }
 
-        // Se a posição de destino atingiu 5 atletas e o drop foi num slot específico, faz substituição ou não permite
         if (targetIndex !== null && targetIndex < targetList.length) {
-          // Insere ou troca no slot alvo
           targetList.splice(targetIndex, 0, movedAthlete)
-          // Se passou de 5, remove o excedente do final
-          if (targetList.length > 5) {
-            targetList.pop()
-          }
         } else {
-          // Adiciona ao final da lista de destino
-          if (targetList.length < 5) {
-            targetList.push(movedAthlete)
-          } else {
-            // Se já tem 5 e dropou na posição geral, substitui a 5ª opção
-            targetList[4] = movedAthlete
-          }
+          targetList.push(movedAthlete)
         }
 
         escalacao[sourcePosId] = sourceList
         escalacao[targetPosId] = targetList
-        return { ...team, escalacao }
+        const updatedTeam = { ...team, escalacao }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
       }
       return team
     }))
@@ -524,8 +682,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   // Reposicionamento livre dos blocos de posição no gramado
   const handlePositionMouseDown = (e, posId) => {
-    // Apenas botão principal do mouse e somente se não estiver clicando em botão
-    if (e.button !== 0 || e.target.closest('button')) return
+    // Apenas botão principal do mouse e somente se não estiver clicando em botão ou input
+    if (e.button !== 0 || e.target.closest('button') || e.target.closest('input') || e.target.closest('label')) return
     e.preventDefault()
 
     const pitchEl = pitchRef.current
@@ -570,40 +728,57 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     window.addEventListener('mouseup', handleMouseUp)
   }
 
-  // Escalar atleta no cenário ativo
+  // Escalar atleta no cenário ativo (sem limite restritivo de 5 atletas, suportando preenchimento de slot específico)
   const handleAssignPlayer = (player) => {
     if (!assigningPos) return
     const posId = assigningPos.id
+    const targetSlotIndex = assigningPos.targetSlotIndex
 
     setShadowTeams(prev => prev.map(team => {
       if (team.id === activeTeam.id) {
-        const currentList = team.escalacao[posId] || []
-        if (currentList.length >= 5) return team
-        if (currentList.some(p => p.id === player.id)) return team
+        const currentList = [...(team.escalacao[posId] || [])]
+        if (player.id && currentList.some((p, idx) => idx !== targetSlotIndex && p.id && String(p.id) === String(player.id))) {
+          return team
+        }
 
-        return {
+        const existingSlot = (targetSlotIndex !== undefined && targetSlotIndex !== null && currentList[targetSlotIndex])
+          ? currentList[targetSlotIndex]
+          : null
+
+        const newEntry = {
+          slotId: existingSlot?.slotId || `slot-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+          id: player.id,
+          nome: player.nome,
+          nivel: player.nivel,
+          ca: player.ca,
+          clube: player.clube || player.ca,
+          an: player.an || player.anoNascimento,
+          alt: player.alt || player.altura,
+          anoNascimento: player.anoNascimento || player.an,
+          altura: player.altura || player.alt,
+          posicaoOriginal: player.posicao,
+          estimated_salary: player.estimated_salary || player.salarioEstimado || null,
+          salarioEstimado: player.estimated_salary || player.salarioEstimado || null,
+          is_own_player: existingSlot ? Boolean(existingSlot.is_own_player) : Boolean(player.is_own_player),
+          is_simulated_active: existingSlot ? existingSlot.is_simulated_active !== false : true,
+          is_foreign: Boolean(player.is_foreign)
+        }
+
+        if (targetSlotIndex !== undefined && targetSlotIndex !== null && targetSlotIndex < currentList.length) {
+          currentList[targetSlotIndex] = newEntry
+        } else {
+          currentList.push(newEntry)
+        }
+
+        const updatedTeam = {
           ...team,
           escalacao: {
             ...team.escalacao,
-            [posId]: [
-              ...currentList,
-              {
-                id: player.id,
-                nome: player.nome,
-                nivel: player.nivel,
-                ca: player.ca,
-                clube: player.clube || player.ca,
-                an: player.an || player.anoNascimento,
-                alt: player.alt || player.altura,
-                anoNascimento: player.anoNascimento || player.an,
-                altura: player.altura || player.alt,
-                posicaoOriginal: player.posicao,
-                estimated_salary: player.estimated_salary || player.salarioEstimado || null,
-                salarioEstimado: player.estimated_salary || player.salarioEstimado || null
-              }
-            ]
+            [posId]: currentList
           }
         }
+        saveShadowTeamToSupabase(updatedTeam)
+        return updatedTeam
       }
       return team
     }))
@@ -625,7 +800,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     }))
   }
 
-  // Promover reserva a titular imediato (troca 1ª com a opção clicada)
+  // Promover linha para o topo da posição
   const handlePromoteToStarter = (posId, candidateIndex) => {
     if (candidateIndex === 0) return
 
@@ -694,7 +869,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           currentList[athleteIndex] = {
             ...currentList[athleteIndex],
             estimated_salary: numericSalary,
-            salarioEstimado: numericSalary
+            salarioEstimado: numericSalary,
+            salaryCleared: numericSalary === null
           }
         }
         const updatedTeam = {
@@ -710,26 +886,28 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       return team
     }))
 
-    // 2. Atualiza atleta globalmente
-    const updatedPlayerData = {
-      ...athlete,
-      estimated_salary: numericSalary,
-      salarioEstimado: numericSalary
-    }
+    // 2. Atualiza atleta globalmente se tiver id no banco
+    if (athlete?.id) {
+      const updatedPlayerData = {
+        ...athlete,
+        estimated_salary: numericSalary,
+        salarioEstimado: numericSalary
+      }
 
-    if (onSavePlayer) {
-      await onSavePlayer(updatedPlayerData)
-    } else {
-      try {
-        const cached = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
-        if (cached) {
-          const list = JSON.parse(cached)
-          const updated = list.map(p => String(p.id) === String(athlete.id) ? { ...p, ...updatedPlayerData } : p)
-          localStorage.setItem('scout_players', JSON.stringify(updated))
-          localStorage.setItem('radar_players', JSON.stringify(updated))
-        }
-      } catch (e) {}
-      await upsertPlayerToSupabase(updatedPlayerData)
+      if (onSavePlayer) {
+        await onSavePlayer(updatedPlayerData)
+      } else {
+        try {
+          const cached = localStorage.getItem('scout_players') || localStorage.getItem('radar_players')
+          if (cached) {
+            const list = JSON.parse(cached)
+            const updated = list.map(p => String(p.id) === String(athlete.id) ? { ...p, ...updatedPlayerData } : p)
+            localStorage.setItem('scout_players', JSON.stringify(updated))
+            localStorage.setItem('radar_players', JSON.stringify(updated))
+          }
+        } catch (e) {}
+        await upsertPlayerToSupabase(updatedPlayerData)
+      }
     }
 
     setEditingSalary(null)
@@ -751,6 +929,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
     setShadowTeams(prev => [...prev, newTeam])
     setActiveTeamId(newId)
+    saveShadowTeamToSupabase(newTeam)
     setNewTeamName('')
     setIsNewTeamModalOpen(false)
   }
@@ -762,7 +941,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
     setShadowTeams(prev => prev.map(team => {
       if (team.id === activeTeam.id) {
-        return { ...team, nome: renameValue.trim() }
+        const updated = { ...team, nome: renameValue.trim() }
+        saveShadowTeamToSupabase(updated)
+        return updated
       }
       return team
     }))
@@ -804,31 +985,24 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   const formatAthleteDisplayName = (athlete) => {
     if (!athlete || !athlete.nome) return ''
-    const rawAn = athlete.an || athlete.anoNascimento
-    if (!rawAn) return athlete.nome
-    const strAn = String(rawAn).trim()
-    const numAn = parseInt(strAn, 10)
-    if (!isNaN(numAn) && numAn > 1900) {
-      const lastTwo = String(numAn).slice(-2)
-      return `${athlete.nome} ${lastTwo}'`
-    }
-    if (strAn.length === 2 && !isNaN(parseInt(strAn, 10))) {
-      return `${athlete.nome} ${strAn}'`
+    const { birthYear } = extractAgeAndBirthYear(athlete)
+    if (birthYear) {
+      return `${athlete.nome} ${String(birthYear).slice(-2)}'`
     }
     return athlete.nome
   }
 
   const formatAthleteBirthYear = (athlete) => {
     if (!athlete) return ''
-    const rawAn = athlete.an || athlete.anoNascimento
-    if (!rawAn) return ''
-    const strAn = String(rawAn).trim()
-    const numAn = parseInt(strAn, 10)
-    if (!isNaN(numAn) && numAn > 1900) {
-      return `${String(numAn).slice(-2)}'`
+    const { age, birthYear } = extractAgeAndBirthYear(athlete)
+    if (birthYear && age) {
+      return `${String(birthYear).slice(-2)}' (${age}a)`
     }
-    if (strAn.length === 2 && !isNaN(parseInt(strAn, 10))) {
-      return `${strAn}'`
+    if (birthYear) {
+      return `${String(birthYear).slice(-2)}'`
+    }
+    if (age) {
+      return `${age}a`
     }
     return ''
   }
@@ -836,7 +1010,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const formatAthleteSubDetails = (athlete) => {
     if (!athlete) return ''
     const club = athlete.clube || athlete.ca || ''
-    const rawAlt = athlete.alt || athlete.altura
+    const rawAlt = athlete.alt !== undefined && athlete.alt !== '' ? athlete.alt : athlete.altura
     let heightStr = ''
     if (rawAlt) {
       const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
@@ -870,6 +1044,42 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     if (posKey === 'Zagueiro') return 'Zag. Destro'
     return map[posKey] || posKey || 'Atleta'
   }
+
+  // Mapeia o código/tag do setor para a Tabela de Gestão de Elenco & Simulação
+  const getSectorBadgeAndTitle = (pos) => {
+    const id = (pos.id || '').toLowerCase()
+    if (id === 'gl') return { tag: 'GOLEIROS', name: pos.label }
+    if (id.startsWith('zag-d')) return { tag: 'ZAG D', name: pos.label }
+    if (id.startsWith('zag-e')) return { tag: 'ZAG E', name: pos.label }
+    if (id.startsWith('zag-c')) return { tag: 'ZAG C', name: pos.label }
+    if (id.startsWith('lat-d') || id.startsWith('ala-d')) return { tag: 'LAT D', name: pos.label }
+    if (id.startsWith('lat-e') || id.startsWith('ala-e')) return { tag: 'LAT E', name: pos.label }
+    if (id.startsWith('vol') || id.startsWith('med')) return { tag: 'VOLANTES', name: pos.label }
+    if (id.startsWith('mei')) return { tag: 'MEIAS', name: pos.label }
+    if (id.startsWith('ext') || id.startsWith('me-')) return { tag: 'EXTREMOS', name: pos.label }
+    if (id.startsWith('ca')) return { tag: 'CENTROAVANTE', name: pos.label }
+    return { tag: pos.id.toUpperCase(), name: pos.label }
+  }
+
+  // Ordena as posições da formação de Defesa (Goleiro -> Zagueiros -> Laterais) para Ataque (Volantes -> Meias -> Extremos -> Centroavante)
+  const orderedPositionsForTable = useMemo(() => {
+    const getSectorOrderWeight = (pos) => {
+      const id = (pos.id || '').toLowerCase()
+      if (id === 'gl') return 10
+      if (id.startsWith('zag-d')) return 20
+      if (id.startsWith('zag-c')) return 25
+      if (id.startsWith('zag-e')) return 30
+      if (id.startsWith('lat-d') || id.startsWith('ala-d')) return 40
+      if (id.startsWith('lat-e') || id.startsWith('ala-e')) return 50
+      if (id.startsWith('vol')) return 60
+      if (id.startsWith('med')) return 65
+      if (id.startsWith('mei')) return 70
+      if (id.startsWith('ext') || id.startsWith('me-')) return 80
+      if (id.startsWith('ca')) return 90
+      return 100 - (pos.top || 0)
+    }
+    return [...activeFormation.positions].sort((a, b) => getSectorOrderWeight(a) - getSectorOrderWeight(b))
+  }, [activeFormation])
 
   // Candidatos para o modal de escalação com busca universal e filtro sugeridos vs todos
   const candidatePlayers = useMemo(() => {
@@ -1842,12 +2052,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         </div>
       )}
 
-        {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS E ETÁRIAS */}
+        {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS, ETÁRIAS E COMPOSIÇÃO DE ELENCO */}
         <div className="w-full max-w-[1400px] mb-4 flex flex-wrap items-center justify-between gap-3 bg-[#0d1522] border border-slate-800/80 rounded-2xl p-3 px-5 shadow-lg backdrop-blur-sm">
-          <div className="flex items-center gap-4 flex-wrap">
+          <div className="flex items-center gap-3 flex-wrap">
             {/* Card 1: Média de Idade */}
-            <div className="flex items-center gap-3 bg-[#131d2e] border border-slate-700/60 rounded-xl px-4 py-2 shadow-sm">
-              <div className="w-9 h-9 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+            <div className="flex items-center gap-3 bg-[#131d2e] border border-slate-700/60 rounded-xl px-3.5 py-2 shadow-sm">
+              <div className="w-8 h-8 rounded-lg bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
                 <Calendar className="w-4 h-4" />
               </div>
               <div>
@@ -1858,18 +2068,16 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   <span className="text-base font-black text-amber-300">
                     {teamMetrics.avgAge ? `${teamMetrics.avgAge} anos` : '—'}
                   </span>
-                  <span className="text-[11px] text-slate-500 font-medium">
-                    {metricsScope === 'TITULARES'
-                      ? `(${teamMetrics.countAge} titulares calculados)`
-                      : `(${teamMetrics.countAge} atletas calculados)`}
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    ({teamMetrics.countAge} ativos)
                   </span>
                 </div>
               </div>
             </div>
 
             {/* Card 2: Média de Altura */}
-            <div className="flex items-center gap-3 bg-[#131d2e] border border-slate-700/60 rounded-xl px-4 py-2 shadow-sm">
-              <div className="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
+            <div className="flex items-center gap-3 bg-[#131d2e] border border-slate-700/60 rounded-xl px-3.5 py-2 shadow-sm">
+              <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center text-emerald-400">
                 <Ruler className="w-4 h-4" />
               </div>
               <div>
@@ -1880,11 +2088,41 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   <span className="text-base font-black text-emerald-300">
                     {teamMetrics.avgHeight ? `${teamMetrics.avgHeight} cm` : '—'}
                   </span>
-                  <span className="text-[11px] text-slate-500 font-medium">
-                    {metricsScope === 'TITULARES'
-                      ? `(${teamMetrics.countHeight} titulares calculados)`
-                      : `(${teamMetrics.countHeight} atletas calculados)`}
+                  <span className="text-[10px] text-slate-500 font-medium">
+                    ({teamMetrics.countHeight} ativos)
                   </span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 3: Elenco Atual vs Alvos de Mercado */}
+            <div className="flex items-center gap-3 bg-[#131d2e] border border-slate-700/60 rounded-xl px-3.5 py-2 shadow-sm">
+              <div className="w-8 h-8 rounded-lg bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400">
+                <UserCheck className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  ELENCO VS ALVOS (ATIVOS)
+                </div>
+                <div className="flex items-center gap-2 text-xs font-bold">
+                  <span className="text-cyan-300">{teamMetrics.activeOwnPlayersCount} Elenco</span>
+                  <span className="text-slate-600">•</span>
+                  <span className="text-amber-300">{teamMetrics.activeTargetsCount} Alvos</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Card 4: Estrangeiros Ativos */}
+            <div className="flex items-center gap-2.5 bg-[#131d2e] border border-slate-700/60 rounded-xl px-3.5 py-2 shadow-sm">
+              <div className="w-8 h-8 rounded-lg bg-purple-500/10 border border-purple-500/20 flex items-center justify-center text-purple-400">
+                <Globe className="w-4 h-4" />
+              </div>
+              <div>
+                <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                  ESTRANGEIROS
+                </div>
+                <div className="text-sm font-black text-purple-300">
+                  {teamMetrics.activeForeignersCount} <span className="text-[10px] font-medium text-slate-500">ativos</span>
                 </div>
               </div>
             </div>
@@ -1905,24 +2143,24 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                 }`}
               >
-                Titulares (11)
+                1º Ativo por Posição
               </button>
               <button
                 type="button"
                 onClick={() => setMetricsScope('COMPLETO')}
                 className={`px-3 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
                   metricsScope === 'COMPLETO'
-                    ? 'bg-slate-700 text-white shadow-sm'
+                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
                     : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
                 }`}
               >
-                Elenco Completo
+                Todos Ativos na Simulação
               </button>
             </div>
           </div>
         </div>
 
-        <div ref={pitchRef} className="relative w-full max-w-[1400px] h-[520px] sm:h-[620px] md:min-h-[1250px] md:h-[1280px] pt-3 md:pt-6 rounded-2xl md:rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
+        <div ref={pitchRef} className="relative w-full max-w-[1400px] h-[520px] sm:h-[620px] md:min-h-[1280px] md:h-[1320px] pt-3 md:pt-6 rounded-2xl md:rounded-3xl overflow-hidden border-2 border-emerald-800/40 shadow-2xl bg-[#091b12]">
           {/* Textura sutil de faixas de grama cortada */}
           <div
             className="absolute inset-0 opacity-15 pointer-events-none"
@@ -1960,15 +2198,13 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           {/* Trave do Gol Inferior */}
           <div className="absolute bottom-3 md:bottom-5 left-1/2 -translate-x-1/2 w-14 md:w-24 h-1 md:h-2 border-t-2 border-x-2 border-white/40 pointer-events-none" />
 
-          {/* 3. DISPOSIÇÃO DAS 11 POSIÇÕES CONFORME A FORMAÇÃO SELECIONADA */}
+          {/* 3. DISPOSIÇÃO DAS 11 POSIÇÕES CONFORME A FORMAÇÃO SELECIONADA (SINCRONIZADA COM A TABELA) */}
           {activeFormation.positions.map((pos) => {
             const currentSlots = slotsData[pos.id] || []
-            const titular = currentSlots[0]
-            const alternates = currentSlots.slice(1)
-            const isFull = currentSlots.length >= 5
+            const activeSlotsInPos = currentSlots.filter(s => s && s.is_simulated_active !== false)
+            const firstActiveSlot = activeSlotsInPos[0] || currentSlots[0] || null
             const posCoords = customPositions[pos.id] || { top: `${pos.top}%`, left: `${pos.left}%` }
             const isBeingMoved = draggingPosId === pos.id
-            const recentImpact = positionImpacts[pos.id]
             const posSalaryMetrics = calculatePositionSalaryMetrics(currentSlots, players)
             const posCostInScope = metricsScope === 'TITULARES'
               ? posSalaryMetrics.titularSalary
@@ -1985,12 +2221,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 }`}
                 style={{ top: posCoords.top, left: posCoords.left }}
               >
-                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) */}
+                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) — LISTA DINÂMICA SEM RÓTULOS FIXOS */}
                 <div
                   onDragOver={(e) => handleDragOver(e, pos.id)}
                   onDragLeave={(e) => handleDragLeave(e, pos.id)}
                   onDrop={(e) => handleDropOnSlot(e, pos.id, null)}
-                  className={`hidden md:block w-[225px] min-w-[225px] max-w-[235px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:scale-105 group ${
+                  className={`hidden md:block w-[236px] min-w-[236px] max-w-[246px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:z-30 group ${
                     isBeingMoved
                       ? 'border-2 border-emerald-400 shadow-emerald-500/30 scale-105 ring-2 ring-emerald-500/20'
                       : dragOverTarget === pos.id
@@ -1998,7 +2234,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                       : 'border-slate-700/70 hover:border-emerald-500/70'
                   }`}
                 >
-                  {/* Topo do Card: Alça Exclusiva de Arraste da Posição + Nome + Botão "+" */}
+                  {/* Topo do Card: Alça de Arraste da Posição + Nome + Botões de Adicionar */}
                   <div
                     onMouseDown={(e) => handlePositionMouseDown(e, pos.id)}
                     className="flex items-center justify-between border-b border-slate-800 pb-1.5 mb-1.5 cursor-move select-none active:cursor-grabbing group/header"
@@ -2008,87 +2244,99 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                       <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 truncate group-hover/header:text-emerald-300">
                         {pos.label}
                       </span>
+                      {currentSlots.length > 0 && (
+                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-slate-800 text-slate-400">
+                          {activeSlotsInPos.length}/{currentSlots.length}
+                        </span>
+                      )}
                     </div>
 
-                    {!isFull && (
+                    <div className="flex items-center gap-1" data-export-hide="true">
                       <button
+                        type="button"
+                        data-export-hide="true"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAddEmptySlot(pos.id)
+                        }}
+                        title="Adicionar nova linha sincronizada nesta posição"
+                        className="px-1.5 h-4 rounded bg-slate-800 hover:bg-emerald-500/20 text-slate-300 hover:text-emerald-300 border border-slate-700 hover:border-emerald-500/40 flex items-center gap-0.5 text-[8.5px] font-bold transition-colors cursor-pointer"
+                      >
+                        <Plus className="w-2 h-2 stroke-[3]" />
+                        <span>Linha</span>
+                      </button>
+                      <button
+                        type="button"
                         data-export-hide="true"
                         onClick={(e) => {
                           e.stopPropagation()
                           setAssigningPos(pos)
                           setPlayerSearch('')
                         }}
-                        title="Adicionar Atleta"
+                        title="Escalar atleta do banco de dados"
                         className="w-4 h-4 rounded bg-emerald-500/10 hover:bg-emerald-500 hover:text-slate-950 text-emerald-400 border border-emerald-500/30 flex items-center justify-center text-[10px] transition-colors cursor-pointer"
                       >
-                        <Plus className="w-2.5 h-2.5 stroke-[3]" />
+                        <Search className="w-2.5 h-2.5 stroke-[2.5]" />
                       </button>
-                    )}
+                    </div>
                   </div>
 
-                  {/* Seletor Rápido de Hierarquia (1ª, 2ª, 3ª Opção) + Micro-Badge de Impacto Salarial */}
-                  {currentSlots.length > 0 && (
-                    <div className="flex items-center gap-1 mb-2 pb-1 border-b border-slate-800/60 overflow-x-auto no-scrollbar">
-                      <div className="flex items-center gap-1">
-                        {currentSlots.map((player, idx) => {
-                          const isStarter = idx === 0
-                          const priorityLabel = `${idx + 1}ª`
-                          return (
-                            <button
-                              key={player.id || idx}
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                if (!isStarter) {
-                                  handlePromoteToStarter(pos.id, idx)
-                                }
-                              }}
-                              title={isStarter ? `Titular ativo: ${player.nome}` : `Promover ${player.nome} a Titular`}
-                              className={`px-1.5 py-0.5 rounded text-[8.5px] font-black transition-all cursor-pointer ${
-                                isStarter
-                                  ? 'bg-emerald-400 text-slate-950 shadow-sm shadow-emerald-500/30 ring-1 ring-emerald-300'
-                                  : 'bg-slate-800/90 text-slate-400 hover:text-white hover:bg-slate-700 border border-slate-700/60'
-                              }`}
-                            >
-                              {priorityLabel}
-                            </button>
-                          )
-                        })}
+                  {/* Corpo do Card: Lista Dinâmica de Slots Sincronizados com a Tabela */}
+                  <div className="space-y-1.5 max-h-[230px] overflow-y-auto pr-0.5 custom-scrollbar">
+                    {currentSlots.length === 0 ? (
+                      <div className="flex items-center gap-1" data-export-hide="true">
+                        <button
+                          type="button"
+                          onDragOver={(e) => {
+                            e.stopPropagation()
+                            handleDragOver(e, `${pos.id}-empty`)
+                          }}
+                          onDragLeave={(e) => {
+                            e.stopPropagation()
+                            handleDragLeave(e, `${pos.id}-empty`)
+                          }}
+                          onDrop={(e) => handleDropOnSlot(e, pos.id, 0)}
+                          onClick={() => {
+                            setAssigningPos(pos)
+                            setPlayerSearch('')
+                          }}
+                          className={`flex-1 rounded-lg p-1.5 text-center text-[9.5px] font-semibold cursor-pointer transition-colors border ${
+                            dragOverTarget === `${pos.id}-empty`
+                              ? 'border-2 border-dashed border-emerald-400 bg-emerald-500/20 text-emerald-200'
+                              : 'border-dashed border-emerald-500/30 hover:border-emerald-400 text-emerald-400/80 hover:text-emerald-300'
+                          }`}
+                        >
+                          + Escalar
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleAddEmptySlot(pos.id)}
+                          className="px-2 py-1.5 rounded-lg text-[9.5px] font-semibold cursor-pointer transition-colors border border-dashed border-slate-700 hover:border-cyan-400 text-slate-400 hover:text-cyan-300"
+                          title="Criar slot em branco sincronizado com a tabela"
+                        >
+                          + Linha
+                        </button>
                       </div>
-
-                      {/* Micro-badge de Impacto Salarial ao alternar titulares */}
-                      {showFinancials && recentImpact && (() => {
-                        const diffInfo = formatSalaryDiff(recentImpact.diff)
-                        return (
-                          <div
-                            className={`ml-auto flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[8px] font-black border animate-in fade-in zoom-in-95 duration-200 shrink-0 ${diffInfo.colorClass}`}
-                            title={`Impacto salarial na troca: ${diffInfo.text}`}
-                          >
-                            <span>{diffInfo.compactText}</span>
-                          </div>
-                        )
-                      })()}
-                    </div>
-                  )}
-
-                  {/* Corpo do Card: Linhas Ordenadas (1º Titular + Suplentes) */}
-                  <div className="space-y-1.5 h-auto">
-                    {/* 1º Titular */}
-                    {titular ? (
-                      (() => {
-                        const fullTitular = players.find(p => p.id === titular.id) || titular
-                        const birthYearFormatted = formatAthleteBirthYear(fullTitular)
-                        const subDetails = formatAthleteSubDetails(fullTitular)
-                        const slotKey = `${pos.id}-0`
-                        const isBeingDragged = draggedItem?.posId === pos.id && draggedItem?.index === 0
+                    ) : (
+                      currentSlots.map((slot, slotIdx) => {
+                        const fullAthlete = resolveSlotAthlete(slot)
+                        const isSimulatedActive = fullAthlete.is_simulated_active !== false
+                        const isOwnPlayer = Boolean(fullAthlete.is_own_player)
+                        const isForeign = Boolean(fullAthlete.is_foreign)
+                        const isBlankSlot = !fullAthlete.nome?.trim() && !fullAthlete.id
+                        const birthYearFormatted = formatAthleteBirthYear(fullAthlete)
+                        const subDetails = formatAthleteSubDetails(fullAthlete)
+                        const slotKey = `${pos.id}-${slotIdx}`
+                        const isBeingDragged = draggedItem?.posId === pos.id && draggedItem?.index === slotIdx
                         const isDragOverThis = dragOverTarget === slotKey
-                        const isCustomSal = isAthleteSalaryCustom(fullTitular, players)
+                        const athleteSalary = getAthleteSalary(fullAthlete, players)
 
                         return (
                           <div
+                            key={slot.slotId || slot.id || slotIdx}
                             data-player-card="true"
-                            draggable={true}
-                            onDragStart={(e) => handleDragStart(e, pos.id, 0, fullTitular)}
+                            draggable={!isBlankSlot}
+                            onDragStart={(e) => !isBlankSlot && handleDragStart(e, pos.id, slotIdx, fullAthlete)}
                             onDragEnd={handleDragEnd}
                             onDragOver={(e) => {
                               e.stopPropagation()
@@ -2098,52 +2346,134 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               e.stopPropagation()
                               handleDragLeave(e, slotKey)
                             }}
-                            onDrop={(e) => handleDropOnSlot(e, pos.id, 0)}
-                            className={`rounded-lg px-2 py-1.5 flex flex-col gap-0.5 group/row transition-all cursor-grab active:cursor-grabbing ${
-                              isBeingDragged
-                                ? 'opacity-40 scale-95 border border-dashed border-emerald-400'
+                            onDrop={(e) => handleDropOnSlot(e, pos.id, slotIdx)}
+                            className={`rounded-lg px-2 py-1.5 flex flex-col gap-0.5 group/row transition-all border ${
+                              !isSimulatedActive
+                                ? 'opacity-40 grayscale border-dashed border-slate-700 bg-slate-950/40'
+                                : isBeingDragged
+                                ? 'opacity-40 scale-95 border-dashed border-emerald-400'
                                 : isDragOverThis
                                 ? 'border-2 border-dashed border-emerald-500/80 bg-emerald-950/60 shadow-md shadow-emerald-500/20'
-                                : 'bg-emerald-950/40 border border-emerald-700/40 hover:border-emerald-500/60'
+                                : isOwnPlayer
+                                ? 'bg-cyan-950/35 border-cyan-700/40 hover:border-cyan-500/60'
+                                : 'bg-emerald-950/35 border-emerald-700/40 hover:border-emerald-500/60'
                             }`}
                           >
                             <div className="flex items-center justify-between gap-1 w-full">
-                              <div className="flex items-center gap-1 min-w-0 flex-1">
-                                <span className="text-[10px] font-black text-emerald-400 shrink-0">1º</span>
-                                <span className="text-white font-bold text-[12px] truncate" title={fullTitular.nome}>
-                                  {fullTitular.nome}
-                                </span>
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                {/* Checkbox B no Card: Ativo na Simulação */}
+                                <input
+                                  type="checkbox"
+                                  data-export-hide="true"
+                                  checked={isSimulatedActive}
+                                  onChange={(e) => {
+                                    e.stopPropagation()
+                                    handleUpdateSlotField(pos.id, slotIdx, {
+                                      is_simulated_active: e.target.checked
+                                    })
+                                  }}
+                                  title={
+                                    isSimulatedActive
+                                      ? 'Ativo na Simulação (clique para desativar do orçamento e médias)'
+                                      : 'Inativo na Simulação (clique para incluir no orçamento e médias)'
+                                  }
+                                  className="w-3 h-3 rounded accent-emerald-500 cursor-pointer shrink-0"
+                                />
+
+                                {isBlankSlot ? (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setAssigningPos({ ...pos, targetSlotIndex: slotIdx })
+                                      setPlayerSearch('')
+                                    }}
+                                    className="text-[10.5px] italic text-slate-400 hover:text-emerald-300 truncate text-left cursor-pointer"
+                                    title="Slot sincronizado — digite na tabela abaixo ou clique para escalar do banco"
+                                  >
+                                    Slot em branco (escalar...)
+                                  </button>
+                                ) : (
+                                  <span
+                                    className={`font-bold text-[11.5px] leading-tight truncate ${
+                                      isSimulatedActive ? 'text-white' : 'text-slate-400 line-through'
+                                    }`}
+                                    title={fullAthlete.nome}
+                                  >
+                                    {fullAthlete.nome}
+                                  </span>
+                                )}
+
                                 {birthYearFormatted && (
-                                  <span className="text-[10px] font-semibold text-slate-400 bg-slate-800/80 px-1 py-0.5 rounded ml-1 shrink-0">
+                                  <span className="text-[9px] font-semibold text-slate-300 bg-slate-800/90 px-1 py-0.2 rounded shrink-0">
                                     {birthYearFormatted}
                                   </span>
                                 )}
                               </div>
 
                               <div className="flex items-center gap-1 shrink-0 ml-1">
-                                <span className={`text-[8px] font-bold px-1 rounded border leading-tight ${getNivelStyle(fullTitular.nivel)}`}>
-                                  {fullTitular.nivel || '—'}
-                                </span>
+                                {/* Badge discreto 'Elenco' vs 'Alvo' (Checkbox A) */}
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation()
+                                    handleUpdateSlotField(pos.id, slotIdx, {
+                                      is_own_player: !isOwnPlayer
+                                    })
+                                  }}
+                                  title={
+                                    isOwnPlayer
+                                      ? 'Atleta do Elenco Atual (clique para alternar para Alvo de Mercado)'
+                                      : 'Alvo de Mercado (clique para marcar como Elenco Atual)'
+                                  }
+                                  className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded border transition-colors cursor-pointer ${
+                                    isOwnPlayer
+                                      ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40 hover:bg-cyan-500/30'
+                                      : 'bg-amber-500/20 text-amber-300 border-amber-500/40 hover:bg-amber-500/30'
+                                  }`}
+                                >
+                                  {isOwnPlayer ? 'Elenco' : 'Alvo'}
+                                </button>
+
+                                {isForeign && (
+                                  <span
+                                    className="text-[7.5px] font-black px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40"
+                                    title="Atleta Estrangeiro"
+                                  >
+                                    EST
+                                  </span>
+                                )}
+
+                                {fullAthlete.nivel && (
+                                  <span className={`text-[8px] font-bold px-1 rounded border leading-tight ${getNivelStyle(fullAthlete.nivel)}`}>
+                                    {fullAthlete.nivel}
+                                  </span>
+                                )}
+
+                                {!isBlankSlot && (
+                                  <button
+                                    type="button"
+                                    data-export-hide="true"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      setEditingFullPlayer(fullAthlete)
+                                    }}
+                                    title="Editar perfil completo do atleta"
+                                    className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-amber-400 transition-opacity cursor-pointer"
+                                  >
+                                    <Pencil className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
+
                                 <button
                                   type="button"
                                   data-export-hide="true"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    setEditingFullPlayer(fullTitular)
+                                    handleRemovePlayer(pos.id, slotIdx)
                                   }}
-                                  title="Editar perfil completo do atleta"
-                                  className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-amber-400 transition-opacity cursor-pointer ml-0.5"
-                                >
-                                  <Pencil className="w-2.5 h-2.5" />
-                                </button>
-                                <button
-                                  data-export-hide="true"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleRemovePlayer(pos.id, 0)
-                                  }}
-                                  title="Desescalar"
-                                  className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-rose-400 transition-opacity cursor-pointer ml-0.5"
+                                  title="Remover linha / slot"
+                                  className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-rose-400 transition-opacity cursor-pointer"
                                 >
                                   <X className="w-2.5 h-2.5" />
                                 </button>
@@ -2151,222 +2481,49 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                             </div>
 
                             {subDetails && (
-                              <div className="text-[10px] text-slate-400 truncate pl-3" title={subDetails}>
+                              <div className="text-[9.5px] text-slate-400 leading-tight truncate pl-4" title={subDetails}>
                                 {subDetails}
                               </div>
                             )}
 
                             {/* Linha de Salário Estimado com Edição Rápida */}
-                            {showFinancials && (
-                              <div className="flex items-center justify-between mt-1 pt-1 border-t border-slate-800/60">
+                            {showFinancials && !isBlankSlot && (
+                              <div className="flex items-center justify-between mt-0.5 pt-0.5 border-t border-slate-800/50 pl-4">
                                 <button
                                   type="button"
-                                  data-export-hide="false"
                                   onClick={(e) => {
                                     e.stopPropagation()
-                                    handleOpenSalaryModal(pos.id, pos.label, 0, fullTitular)
+                                    handleOpenSalaryModal(pos.id, pos.label, slotIdx, fullAthlete)
                                   }}
-                                  title="Clique para editar o salário estimado deste atleta"
-                                  className="flex items-center gap-1 text-[9px] text-emerald-400/90 hover:text-emerald-300 font-bold cursor-pointer group/sal hover:underline"
+                                  title="Clique para editar o salário mensal deste atleta"
+                                  className="flex items-center gap-1 text-[8.5px] text-emerald-400/90 hover:text-emerald-300 font-bold cursor-pointer group/sal hover:underline"
                                 >
-                                  <Coins className="w-2.5 h-2.5 text-emerald-400 group-hover/sal:scale-110 transition-transform" />
-                                  <span>{formatBRL(getAthleteSalary(fullTitular, players), false)}/mês</span>
+                                  <Coins className="w-2 h-2 text-emerald-400" />
+                                  <span>{formatBRL(athleteSalary, false)}/mês</span>
                                   <Pencil className="w-2 h-2 text-slate-400 opacity-60 group-hover/sal:opacity-100" />
                                 </button>
-                                {isCustomSal ? (
-                                  <span className="text-[7.5px] font-black px-1 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/30">
-                                    MANUAL
-                                  </span>
-                                ) : (
-                                  <span className="text-[7.5px] font-medium px-1 rounded bg-slate-800/80 text-slate-500">
-                                    ESTIMADO
+                                {!isSimulatedActive && (
+                                  <span className="text-[7px] font-extrabold uppercase px-1 rounded bg-slate-800 text-slate-400">
+                                    FORA DA CONTA
                                   </span>
                                 )}
                               </div>
                             )}
                           </div>
                         )
-                      })()
-                    ) : (
-                      <div
-                        data-export-hide="true"
-                        onDragOver={(e) => {
-                          e.stopPropagation()
-                          handleDragOver(e, `${pos.id}-empty`)
-                        }}
-                        onDragLeave={(e) => {
-                          e.stopPropagation()
-                          handleDragLeave(e, `${pos.id}-empty`)
-                        }}
-                        onDrop={(e) => handleDropOnSlot(e, pos.id, 0)}
-                        onClick={() => {
-                          setAssigningPos(pos)
-                          setPlayerSearch('')
-                        }}
-                        className={`rounded-lg p-1.5 text-center text-[10px] font-semibold cursor-pointer transition-colors border ${
-                          dragOverTarget === `${pos.id}-empty`
-                            ? 'border-2 border-dashed border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                            : 'border-dashed border-emerald-500/30 hover:border-emerald-400 text-emerald-400/70 hover:text-emerald-300'
-                        }`}
-                      >
-                        + 1º Titular
-                      </div>
-                    )}
-
-                    {/* Suplentes (2º ao 5º) - Design Ultra-Compacto */}
-                    {alternates.map((player, idx) => {
-                      const priorityNum = idx + 2
-                      const fullPlayer = players.find(p => p.id === player.id) || player
-                      const birthYearFormatted = formatAthleteBirthYear(fullPlayer)
-                      const subDetails = formatAthleteSubDetails(fullPlayer)
-                      const slotKey = `${pos.id}-${idx + 1}`
-                      const isBeingDragged = draggedItem?.posId === pos.id && draggedItem?.index === (idx + 1)
-                      const isDragOverThis = dragOverTarget === slotKey
-
-                      return (
-                        <div
-                          key={player.id}
-                          data-player-card="true"
-                          draggable={true}
-                          onDragStart={(e) => handleDragStart(e, pos.id, idx + 1, fullPlayer)}
-                          onDragEnd={handleDragEnd}
-                          onDragOver={(e) => {
-                            e.stopPropagation()
-                            handleDragOver(e, slotKey)
-                          }}
-                          onDragLeave={(e) => {
-                            e.stopPropagation()
-                            handleDragLeave(e, slotKey)
-                          }}
-                          onDrop={(e) => handleDropOnSlot(e, pos.id, idx + 1)}
-                          className={`rounded-md py-0.5 px-1.5 flex flex-col gap-0.5 group/row transition-all cursor-grab active:cursor-grabbing border ${
-                            isBeingDragged
-                              ? 'opacity-40 scale-95 border-dashed border-emerald-400 bg-slate-900/40'
-                              : isDragOverThis
-                              ? 'border-2 border-dashed border-emerald-500/80 bg-emerald-950/60 shadow-md shadow-emerald-500/20'
-                              : 'bg-slate-900/80 border-slate-800 hover:border-slate-700'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between gap-1 w-full">
-                            <div className="flex items-center gap-1 min-w-0 flex-1">
-                              <span className="text-[9.5px] text-slate-500 font-bold shrink-0">{priorityNum}º</span>
-                              <span className="text-white font-bold text-[11.5px] leading-tight truncate" title={fullPlayer.nome}>
-                                {fullPlayer.nome}
-                              </span>
-                              {birthYearFormatted && (
-                                <span className="text-[9.5px] font-semibold text-slate-400 bg-slate-800/80 px-1 py-0.2 rounded ml-0.5 shrink-0">
-                                  {birthYearFormatted}
-                                </span>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-1 shrink-0 ml-1">
-                              <span className={`text-[8px] font-bold px-1 rounded border leading-tight ${getNivelStyle(fullPlayer.nivel)}`}>
-                                {fullPlayer.nivel || '—'}
-                              </span>
-                              <button
-                                type="button"
-                                data-export-hide="true"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  setEditingFullPlayer(fullPlayer)
-                                }}
-                                title="Editar perfil completo do atleta"
-                                className="opacity-0 group-hover/row:opacity-100 text-slate-500 hover:text-amber-400 transition-opacity cursor-pointer ml-0.5"
-                              >
-                                <Pencil className="w-2.5 h-2.5" />
-                              </button>
-                              <button
-                                data-export-hide="true"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleRemovePlayer(pos.id, idx + 1)
-                                }}
-                                title="Desescalar"
-                                className="opacity-0 group-hover/row:opacity-100 text-slate-500 hover:text-rose-400 transition-opacity cursor-pointer ml-0.5"
-                              >
-                                <X className="w-2.5 h-2.5" />
-                              </button>
-                            </div>
-                          </div>
-
-                          {subDetails && (
-                            <div className="text-[9.5px] text-slate-400 leading-tight truncate pl-2.5" title={subDetails}>
-                              {subDetails}
-                            </div>
-                          )}
-
-                          {/* Linha de Salário do Suplente com Edição Rápida */}
-                          {showFinancials && (
-                            <div className="flex items-center justify-between mt-0.5 pt-0.5 border-t border-slate-800/40">
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation()
-                                  handleOpenSalaryModal(pos.id, pos.label, idx + 1, fullPlayer)
-                                }}
-                                title="Clique para editar salário estimado"
-                                className="flex items-center gap-1 text-[8.5px] text-slate-400 hover:text-emerald-300 font-semibold cursor-pointer group/alt-sal hover:underline"
-                              >
-                                <Coins className="w-2 h-2 text-slate-500 group-hover/alt-sal:text-emerald-400" />
-                                <span>{formatBRL(getAthleteSalary(fullPlayer, players), false)}</span>
-                                <Pencil className="w-2 h-2 opacity-50 group-hover/alt-sal:opacity-100" />
-                              </button>
-                              {isAthleteSalaryCustom(fullPlayer, players) && (
-                                <span className="text-[7px] font-bold px-1 rounded bg-slate-800 text-emerald-400">
-                                  MANUAL
-                                </span>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-
-                    {/* Linha discreta para adicionar caso haja titular mas não esteja cheio */}
-                    {titular && !isFull && alternates.length < 4 && (
-                      <div
-                        data-export-hide="true"
-                        onDragOver={(e) => {
-                          e.stopPropagation()
-                          handleDragOver(e, `${pos.id}-add-slot`)
-                        }}
-                        onDragLeave={(e) => {
-                          e.stopPropagation()
-                          handleDragLeave(e, `${pos.id}-add-slot`)
-                        }}
-                        onDrop={(e) => handleDropOnSlot(e, pos.id, null)}
-                        onClick={() => {
-                          setAssigningPos(pos)
-                          setPlayerSearch('')
-                        }}
-                        className={`text-[9px] flex items-center justify-center gap-0.5 cursor-pointer py-0.5 transition-colors border rounded ${
-                          dragOverTarget === `${pos.id}-add-slot`
-                            ? 'border-2 border-dashed border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                            : 'text-slate-500 hover:text-emerald-400 border-dashed border-slate-800 hover:border-slate-700'
-                        }`}
-                      >
-                        <Plus className="w-2.5 h-2.5" />
-                        <span>{alternates.length + 2}º Opção</span>
-                      </div>
+                      })
                     )}
                   </div>
 
-                  {/* Rodapé do Nó: Investimento na Vaga & % do Gasto Total + Alerta de Inversão */}
+                  {/* Rodapé do Nó: Investimento Ativo na Posição & % do Gasto Total */}
                   {showFinancials && currentSlots.length > 0 && (
-                    <div
-                      className={`mt-2 pt-1.5 border-t flex flex-col gap-1 text-[8.5px] transition-colors ${
-                        posSalaryMetrics.hasSalaryInversion
-                          ? 'border-amber-500/40 bg-amber-500/10 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl'
-                          : 'border-slate-800/80 bg-slate-950/60 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl'
-                      }`}
-                    >
+                    <div className="mt-2 pt-1.5 border-t border-slate-800/80 bg-slate-950/60 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl flex flex-col gap-1 text-[8.5px]">
                       <div className="flex items-center justify-between gap-1 w-full">
                         <div
                           className="flex items-center gap-1 text-slate-400 truncate min-w-0"
-                          title={`Investimento na vaga (${metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'}): ${formatBRL(posCostInScope, false)} • ${posPercentOfTotal.toFixed(1)}% do gasto total`}
+                          title={`Investimento ativo na posição: ${formatBRL(posCostInScope, false)} • ${posPercentOfTotal.toFixed(1)}% da folha projetada`}
                         >
-                          <span className="text-slate-500 font-medium">Investimento:</span>
+                          <span className="text-slate-500 font-medium">Subtotal Ativo:</span>
                           <span className="font-bold text-slate-200">
                             {formatBRL(posCostInScope, false)}
                           </span>
@@ -2374,29 +2531,11 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                             • {posPercentOfTotal.toFixed(1)}%
                           </span>
                         </div>
-
-                        {posSalaryMetrics.hasSalaryInversion && (
-                          <div
-                            className="flex items-center gap-0.5 px-1 py-0.5 rounded bg-amber-500/25 text-amber-300 border border-amber-500/60 font-black text-[7.5px] shrink-0 animate-pulse ml-1"
-                            title={`⚠️ Alerta de Inversão Salarial: A 2ª opção (${formatCompactBRL(
-                              posSalaryMetrics.secondSalary
-                            )}) possui custo superior ao titular ativo (${formatCompactBRL(
-                              posSalaryMetrics.titularSalary
-                            )})`}
-                          >
-                            <span>▲ Reserva &gt; Titular</span>
-                          </div>
-                        )}
                       </div>
 
-                      {/* Mini barra horizontal fina de progresso visual */}
                       <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
                         <div
-                          className={`h-full rounded-full transition-all duration-500 ${
-                            posSalaryMetrics.hasSalaryInversion
-                              ? 'bg-gradient-to-r from-amber-500 to-amber-400'
-                              : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                          }`}
+                          className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-emerald-500 to-teal-400"
                           style={{ width: `${Math.min(100, posPercentOfTotal)}%` }}
                         />
                       </div>
@@ -2414,94 +2553,31 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   }}
                   title={pos.label}
                 >
-                  {titular ? (
+                  {firstActiveSlot ? (
                     (() => {
-                      const fullTitular = players.find(p => p.id === titular.id) || titular
-                      const birthYearFormatted = formatAthleteBirthYear(fullTitular)
+                      const fullFirst = resolveSlotAthlete(firstActiveSlot)
+                      const birthYearFormatted = formatAthleteBirthYear(fullFirst)
                       return (
                         <>
                           <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 border-2 border-emerald-300 shadow-lg shadow-black/80 flex items-center justify-center">
                             <span className="text-[10px] font-black text-slate-950 uppercase">{pos.label}</span>
-                            {fullTitular.nivel && (
-                              <span className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded-full border border-black shadow ${getNivelStyle(fullTitular.nivel)}`}>
-                                {fullTitular.nivel}
+                            {fullFirst.nivel && (
+                              <span className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded-full border border-black shadow ${getNivelStyle(fullFirst.nivel)}`}>
+                                {fullFirst.nivel}
                               </span>
                             )}
-                            {alternates.length > 0 && (
+                            {currentSlots.length > 1 && (
                               <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-slate-950 text-emerald-400 border border-emerald-500/50 text-[8px] font-black px-1 rounded shadow">
-                                +{alternates.length}
+                                +{currentSlots.length - 1}
                               </span>
                             )}
                           </div>
                           <span className="mt-1 text-[10px] font-bold text-white max-w-[75px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                            {fullTitular.nome}
+                            {fullFirst.nome || 'Slot em branco'}
                           </span>
                           <span className="text-[8px] font-semibold text-emerald-300/90 max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                            {fullTitular.clubeAtual || fullTitular.clube || birthYearFormatted || ''}
+                            {fullFirst.clube || fullFirst.ca || birthYearFormatted || ''}
                           </span>
-
-                          {/* Salário Estimado Mobile com toque para edição */}
-                          {showFinancials && (
-                            <div
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleOpenSalaryModal(pos.id, pos.label, 0, fullTitular)
-                              }}
-                              className="mt-0.5 flex items-center gap-0.5 px-1 py-0.2 rounded bg-slate-950/90 border border-slate-800 text-[8px] font-bold text-emerald-300 drop-shadow cursor-pointer hover:border-emerald-400"
-                              title="Editar salário estimado"
-                            >
-                              <span>{formatCompactBRL(getAthleteSalary(fullTitular, players))}</span>
-                              <Pencil className="w-1.5 h-1.5 opacity-60 text-slate-400" />
-                            </div>
-                          )}
-
-                          {/* Investimento na Vaga & % Mobile (Quando Financeiro Visível) */}
-                          {showFinancials && posCostInScope > 0 && (
-                            <div
-                              className={`mt-0.5 px-1 py-0.2 rounded text-[7.5px] font-bold flex items-center gap-0.5 shadow transition-colors ${
-                                posSalaryMetrics.hasSalaryInversion
-                                  ? 'bg-amber-950/90 text-amber-300 border border-amber-500/50'
-                                  : 'bg-slate-900/90 text-slate-300 border border-slate-800'
-                              }`}
-                              title={`Investimento na vaga (${metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'}): ${formatBRL(posCostInScope, false)} (${posPercentOfTotal.toFixed(1)}% do total)`}
-                            >
-                              <span>{formatCompactBRL(posCostInScope)} • {posPercentOfTotal.toFixed(1)}%</span>
-                              {posSalaryMetrics.hasSalaryInversion && <span className="text-amber-400">▲</span>}
-                            </div>
-                          )}
-
-                          {/* Seletor rápido de opções em mobile se houver suplentes */}
-                          {currentSlots.length > 1 && (
-                            <div className="mt-1 flex items-center gap-0.5">
-                              {currentSlots.slice(0, 3).map((pl, idx) => (
-                                <button
-                                  key={pl.id || idx}
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    if (idx !== 0) handlePromoteToStarter(pos.id, idx)
-                                  }}
-                                  className={`px-1 py-0.2 rounded text-[7.5px] font-black ${
-                                    idx === 0
-                                      ? 'bg-emerald-400 text-slate-950 font-bold'
-                                      : 'bg-slate-900 text-slate-300 border border-slate-700'
-                                  }`}
-                                >
-                                  {idx + 1}ª
-                                </button>
-                              ))}
-                            </div>
-                          )}
-
-                          {/* Micro-badge de Impacto Mobile */}
-                          {showFinancials && recentImpact && (() => {
-                            const diffInfo = formatSalaryDiff(recentImpact.diff)
-                            return (
-                              <span className={`mt-0.5 px-1 rounded text-[7.5px] font-black border ${diffInfo.colorClass}`}>
-                                {diffInfo.compactText}
-                              </span>
-                            )
-                          })()}
                         </>
                       )
                     })()
@@ -2521,6 +2597,464 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
             )
           })}
         </div>
+
+        {/* ===================================================================== */}
+        {/* TABELA DE GESTÃO DE ELENCO & SIMULAÇÃO (SINCRONIZADA COM O CAMPOGRAMA) */}
+        {/* ===================================================================== */}
+        <section className="w-full max-w-[1400px] mt-6 bg-[#0b121e] border border-slate-800/90 rounded-2xl p-4 md:p-6 shadow-2xl">
+          {/* Cabeçalho da Tabela de Gestão */}
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 mb-5 border-b border-slate-800">
+            <div>
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Shield className="w-4 h-4" />
+                </div>
+                <h2 className="text-base md:text-lg font-black text-white tracking-tight uppercase">
+                  Tabela de Gestão de Elenco &amp; Simulação
+                </h2>
+                <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                  Sincronização em Tempo Real ⇄ Campograma
+                </span>
+              </div>
+              <p className="text-xs text-slate-400 mt-1">
+                Adicione linhas livremente em cada setor, diferencie atletas do <strong className="text-cyan-300">Elenco Atual</strong> vs <strong className="text-amber-300">Alvos de Mercado</strong>, e marque/desmarque <strong className="text-emerald-300">Ativo na Simulação</strong> para testar cenários de folha salarial e médias físicas sem excluir atletas.
+              </p>
+            </div>
+
+            {/* Resumo Rápido de Controles da Tabela */}
+            <div className="flex flex-wrap items-center gap-2 text-xs">
+              <div className="px-3 py-1.5 rounded-xl bg-[#111c2e] border border-slate-700/70 flex items-center gap-1.5">
+                <span className="text-slate-400 font-semibold">Ativos no Cálculo:</span>
+                <span className="font-black text-emerald-400">{teamMetrics.totalConsidered}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl bg-[#111c2e] border border-slate-700/70 flex items-center gap-1.5">
+                <span className="text-slate-400 font-semibold">Elenco Atual:</span>
+                <span className="font-black text-cyan-300">{teamMetrics.activeOwnPlayersCount}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl bg-[#111c2e] border border-slate-700/70 flex items-center gap-1.5">
+                <span className="text-slate-400 font-semibold">Alvos:</span>
+                <span className="font-black text-amber-300">{teamMetrics.activeTargetsCount}</span>
+              </div>
+              <div className="px-3 py-1.5 rounded-xl bg-[#111c2e] border border-slate-700/70 flex items-center gap-1.5">
+                <span className="text-slate-400 font-semibold">Estrangeiros:</span>
+                <span className="font-black text-purple-300">{teamMetrics.activeForeignersCount}</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Grupos por Setor / Posição */}
+          <div className="space-y-4">
+            {orderedPositionsForTable.map((pos) => {
+              const sectorInfo = getSectorBadgeAndTitle(pos)
+              const currentSlots = slotsData[pos.id] || []
+              const activeCountInPos = currentSlots.filter(s => s && s.is_simulated_active !== false && (s.nome?.trim() || s.id)).length
+              const posSalaryMetrics = calculatePositionSalaryMetrics(currentSlots, players)
+
+              return (
+                <div
+                  key={`table-sector-${pos.id}`}
+                  className="bg-[#0f1826] border border-slate-800/90 rounded-xl overflow-visible shadow-md transition-all hover:border-slate-700/80"
+                >
+                  {/* Barra de Título do Setor + Botão '+ Adicionar Linha' */}
+                  <div className="px-4 py-2.5 bg-[#131f33] border-b border-slate-800 flex flex-wrap items-center justify-between gap-2 rounded-t-xl">
+                    <div className="flex items-center gap-2.5">
+                      <span className="px-2 py-0.5 rounded bg-emerald-500/15 text-emerald-300 border border-emerald-500/30 text-[10px] font-black uppercase tracking-wider">
+                        {sectorInfo.tag}
+                      </span>
+                      <span className="text-xs sm:text-sm font-extrabold text-white">
+                        {sectorInfo.name}
+                      </span>
+                      <span className="text-[11px] text-slate-400 font-medium">
+                        ({activeCountInPos} {activeCountInPos === 1 ? 'ativo' : 'ativos'} de {currentSlots.length} {currentSlots.length === 1 ? 'linha' : 'linhas'})
+                      </span>
+                      {showFinancials && posSalaryMetrics.totalSalary > 0 && (
+                        <span className="text-[11px] font-bold text-amber-300 bg-amber-500/10 border border-amber-500/30 px-2 py-0.5 rounded-md">
+                          Subtotal Ativo: {formatBRL(posSalaryMetrics.totalSalary, false)}
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAssigningPos(pos)
+                          setPlayerSearch('')
+                        }}
+                        className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 text-xs font-semibold flex items-center gap-1 transition cursor-pointer"
+                        title="Selecionar atleta existente na base de dados"
+                      >
+                        <Search className="w-3 h-3 text-emerald-400" />
+                        <span>Buscar na Base</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleAddEmptySlot(pos.id)}
+                        className="px-3 py-1 rounded-lg bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs shadow-sm shadow-emerald-500/20 flex items-center gap-1 transition cursor-pointer"
+                      >
+                        <Plus className="w-3.5 h-3.5 stroke-[3]" />
+                        <span>+ Adicionar Linha</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Tabela de Linhas do Setor */}
+                  {currentSlots.length === 0 ? (
+                    <div className="px-4 py-4 text-center text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-center gap-2">
+                      <span>Nenhuma linha cadastrada neste setor.</span>
+                      <button
+                        type="button"
+                        onClick={() => handleAddEmptySlot(pos.id)}
+                        className="text-emerald-400 hover:text-emerald-300 font-bold underline cursor-pointer"
+                      >
+                        Clique em &quot;+ Adicionar Linha&quot; para iniciar
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-left border-collapse min-w-[920px]">
+                        <thead>
+                          <tr className="border-b border-slate-800/80 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-[#0b1320]">
+                            <th className="py-2 px-3 w-[110px] text-center">Ativo na Simulação</th>
+                            <th className="py-2 px-3 w-[125px] text-center">Elenco Atual</th>
+                            <th className="py-2 px-3 min-w-[230px]">Nome do Atleta (Base ou Livre)</th>
+                            <th className="py-2 px-3 w-[150px]">Salário Mensal (R$)</th>
+                            <th className="py-2 px-3 w-[105px]">Altura (cm)</th>
+                            <th className="py-2 px-3 w-[135px]">Idade / Ano Nasc.</th>
+                            <th className="py-2 px-3 w-[115px] text-center">Estrangeiro</th>
+                            <th className="py-2 px-3 min-w-[160px]">Clube Atual / Vínculo</th>
+                            <th className="py-2 px-3 w-[60px] text-center">Ação</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-800/60 text-xs">
+                          {currentSlots.map((slot, slotIdx) => {
+                            const fullAthlete = resolveSlotAthlete(slot)
+                            const isSimulatedActive = fullAthlete.is_simulated_active !== false
+                            const isOwnPlayer = Boolean(fullAthlete.is_own_player)
+                            const isForeign = Boolean(fullAthlete.is_foreign)
+                            const rowKey = `${pos.id}-${slotIdx}`
+                            const isAutocompleteOpen = activeRowAutocomplete === rowKey
+
+                            const currentSalaryNum = getAthleteSalary(fullAthlete, players)
+                            const rawSalaryDisplay = slot.salaryCleared
+                              ? ''
+                              : (slot.estimated_salary !== undefined && slot.estimated_salary !== null && slot.estimated_salary !== ''
+                                ? slot.estimated_salary
+                                : (currentSalaryNum > 0 ? currentSalaryNum : ''))
+
+                            const rawHeightVal = slot.alt !== undefined
+                              ? slot.alt
+                              : (fullAthlete.alt || fullAthlete.altura || '')
+
+                            const rawAgeOrYearVal = slot.an !== undefined
+                              ? slot.an
+                              : (fullAthlete.an || fullAthlete.anoNascimento || fullAthlete.idade || '')
+
+                            const { age: calcAge, birthYear: calcBirthYear } = extractAgeAndBirthYear(fullAthlete)
+
+                            const rawClubVal = slot.ca !== undefined
+                              ? slot.ca
+                              : (fullAthlete.ca || fullAthlete.clube || '')
+
+                            // Sugestões de autocomplete para o input de Nome
+                            const nameQuery = (fullAthlete.nome || '').trim().toLowerCase()
+                            const autocompleteMatches = isAutocompleteOpen
+                              ? players
+                                  .filter(p => {
+                                    if (!nameQuery) {
+                                      return (pos.matchPositions || []).includes(p.posicao)
+                                    }
+                                    return (
+                                      (p.nome || '').toLowerCase().includes(nameQuery) ||
+                                      (p.ca || '').toLowerCase().includes(nameQuery)
+                                    )
+                                  })
+                                  .slice(0, 8)
+                              : []
+
+                            return (
+                              <tr
+                                key={slot.slotId || slot.id || slotIdx}
+                                className={`transition-all ${
+                                  !isSimulatedActive
+                                    ? 'opacity-40 grayscale bg-slate-950/50'
+                                    : isOwnPlayer
+                                    ? 'bg-cyan-950/10 hover:bg-cyan-950/20'
+                                    : 'hover:bg-slate-800/40'
+                                }`}
+                              >
+                                {/* 1. Checkbox: Ativo na Simulação (is_simulated_active) */}
+                                <td className="py-2 px-3 text-center">
+                                  <label className="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={isSimulatedActive}
+                                      onChange={(e) =>
+                                        handleUpdateSlotField(pos.id, slotIdx, {
+                                          is_simulated_active: e.target.checked
+                                        })
+                                      }
+                                      className="w-4 h-4 rounded accent-emerald-500 cursor-pointer"
+                                    />
+                                    <span
+                                      className={`text-[10px] font-extrabold px-1.5 py-0.5 rounded border ${
+                                        isSimulatedActive
+                                          ? 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                                          : 'bg-slate-800 text-slate-400 border-slate-700'
+                                      }`}
+                                    >
+                                      {isSimulatedActive ? 'Ativo' : 'Inativo'}
+                                    </span>
+                                  </label>
+                                </td>
+
+                                {/* 2. Checkbox: Elenco Atual / Meu Jogador (is_own_player) */}
+                                <td className="py-2 px-3 text-center">
+                                  <label className="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={isOwnPlayer}
+                                      onChange={(e) =>
+                                        handleUpdateSlotField(pos.id, slotIdx, {
+                                          is_own_player: e.target.checked
+                                        })
+                                      }
+                                      className="w-4 h-4 rounded accent-cyan-400 cursor-pointer"
+                                    />
+                                    <span
+                                      className={`text-[10px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${
+                                        isOwnPlayer
+                                          ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+                                          : 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+                                      }`}
+                                    >
+                                      {isOwnPlayer ? 'Elenco' : 'Alvo'}
+                                    </span>
+                                  </label>
+                                </td>
+
+                                {/* 3. Nome do Atleta (com seletor/autocomplete buscando de players OU digitação livre) */}
+                                <td className="py-2 px-3 relative">
+                                  <div className="flex items-center gap-1.5">
+                                    <div className="relative flex-1">
+                                      <input
+                                        type="text"
+                                        value={fullAthlete.nome || ''}
+                                        onFocus={() => setActiveRowAutocomplete(rowKey)}
+                                        onBlur={() => {
+                                          setTimeout(() => {
+                                            setActiveRowAutocomplete(prev => (prev === rowKey ? null : prev))
+                                          }, 180)
+                                        }}
+                                        onChange={(e) => {
+                                          setActiveRowAutocomplete(rowKey)
+                                          handleUpdateSlotField(pos.id, slotIdx, {
+                                            nome: e.target.value
+                                          })
+                                        }}
+                                        placeholder="Digite o nome ou busque na base..."
+                                        className="w-full bg-[#090f19] border border-slate-700/80 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-bold text-white placeholder-slate-500 focus:outline-none"
+                                      />
+
+                                      {/* Dropdown de Autocomplete da Base (scout_players) */}
+                                      {isAutocompleteOpen && autocompleteMatches.length > 0 && (
+                                        <div className="absolute left-0 right-0 top-full mt-1 z-50 bg-[#0b1322] border border-slate-700 rounded-xl shadow-2xl max-h-52 overflow-y-auto divide-y divide-slate-800/70">
+                                          <div className="px-2.5 py-1 text-[9.5px] font-bold uppercase tracking-wider text-emerald-400 bg-slate-900/90 flex items-center justify-between">
+                                            <span>Sugestões da Base de Dados</span>
+                                            <span className="text-slate-500">Clique p/ vincular</span>
+                                          </div>
+                                          {autocompleteMatches.map((dbPlayer) => (
+                                            <button
+                                              key={dbPlayer.id}
+                                              type="button"
+                                              onMouseDown={(e) => {
+                                                e.preventDefault()
+                                                handleSelectDatabasePlayerForSlot(pos.id, slotIdx, dbPlayer)
+                                              }}
+                                              className="w-full px-3 py-1.5 text-left hover:bg-emerald-500/15 flex items-center justify-between gap-2 transition cursor-pointer"
+                                            >
+                                              <div className="min-w-0">
+                                                <div className="text-xs font-bold text-white truncate">
+                                                  {dbPlayer.nome}
+                                                </div>
+                                                <div className="text-[10px] text-slate-400 truncate">
+                                                  {dbPlayer.ca || 'Sem clube'} • {getPositionLabel(dbPlayer.posicao)}
+                                                  {dbPlayer.alt ? ` • ${dbPlayer.alt}cm` : ''}
+                                                  {dbPlayer.an ? ` • ${dbPlayer.an}` : ''}
+                                                </div>
+                                              </div>
+                                              {dbPlayer.nivel && (
+                                                <span className={`text-[9px] px-1.5 py-0.5 rounded border shrink-0 ${getNivelStyle(dbPlayer.nivel)}`}>
+                                                  {dbPlayer.nivel}
+                                                </span>
+                                              )}
+                                            </button>
+                                          ))}
+                                        </div>
+                                      )}
+                                    </div>
+
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setAssigningPos({ ...pos, targetSlotIndex: slotIdx })
+                                        setPlayerSearch('')
+                                      }}
+                                      title="Abrir catálogo de atletas para esta linha"
+                                      className="p-1.5 rounded-lg bg-slate-800/90 hover:bg-slate-700 text-slate-300 hover:text-emerald-300 border border-slate-700 transition cursor-pointer shrink-0"
+                                    >
+                                      <Search className="w-3.5 h-3.5" />
+                                    </button>
+                                  </div>
+                                </td>
+
+                                {/* 4. Salário Mensal (R$) */}
+                                <td className="py-2 px-3">
+                                  <div className="relative flex items-center">
+                                    <span className="absolute left-2.5 text-[10px] font-bold text-slate-500 pointer-events-none">
+                                      R$
+                                    </span>
+                                    <input
+                                      type="number"
+                                      step="1000"
+                                      min="0"
+                                      value={rawSalaryDisplay}
+                                      onChange={(e) => {
+                                        const val = e.target.value
+                                        if (val === '') {
+                                          handleUpdateSlotField(pos.id, slotIdx, {
+                                            estimated_salary: null,
+                                            salarioEstimado: null,
+                                            salaryCleared: true
+                                          })
+                                        } else {
+                                          const num = Number(val)
+                                          handleUpdateSlotField(pos.id, slotIdx, {
+                                            estimated_salary: isNaN(num) ? null : num,
+                                            salarioEstimado: isNaN(num) ? null : num,
+                                            salaryCleared: false
+                                          })
+                                        }
+                                      }}
+                                      placeholder="0"
+                                      className="w-full bg-[#090f19] border border-slate-700/80 focus:border-amber-400 rounded-lg pl-7 pr-2 py-1.5 text-xs font-bold text-amber-300 placeholder-slate-600 focus:outline-none"
+                                    />
+                                  </div>
+                                </td>
+
+                                {/* 5. Altura (cm) */}
+                                <td className="py-2 px-3">
+                                  <div className="relative flex items-center">
+                                    <input
+                                      type="text"
+                                      value={rawHeightVal}
+                                      onChange={(e) => {
+                                        const val = e.target.value
+                                        handleUpdateSlotField(pos.id, slotIdx, {
+                                          alt: val,
+                                          altura: val
+                                        })
+                                      }}
+                                      placeholder="Ex: 186"
+                                      className="w-full bg-[#090f19] border border-slate-700/80 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs font-semibold text-emerald-300 placeholder-slate-600 focus:outline-none"
+                                    />
+                                  </div>
+                                </td>
+
+                                {/* 6. Idade / Ano de nascimento */}
+                                <td className="py-2 px-3">
+                                  <div className="flex items-center gap-1">
+                                    <input
+                                      type="text"
+                                      value={rawAgeOrYearVal}
+                                      onChange={(e) => {
+                                        const val = e.target.value
+                                        handleUpdateSlotField(pos.id, slotIdx, {
+                                          an: val,
+                                          anoNascimento: val,
+                                          idade: val
+                                        })
+                                      }}
+                                      placeholder="Ex: 2001 ou 25"
+                                      className="w-full bg-[#090f19] border border-slate-700/80 focus:border-emerald-500 rounded-lg px-2 py-1.5 text-xs font-semibold text-slate-200 placeholder-slate-600 focus:outline-none"
+                                    />
+                                    {(calcAge || calcBirthYear) && (
+                                      <span
+                                        className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-slate-800 text-amber-300 shrink-0"
+                                        title={calcBirthYear && calcAge ? `Ano: ${calcBirthYear} • Idade: ${calcAge} anos` : ''}
+                                      >
+                                        {calcAge ? `${calcAge}a` : `${calcBirthYear}`}
+                                      </span>
+                                    )}
+                                  </div>
+                                </td>
+
+                                {/* 7. Flag Estrangeiro (is_foreign) */}
+                                <td className="py-2 px-3 text-center">
+                                  <label className="inline-flex items-center justify-center gap-1.5 cursor-pointer select-none">
+                                    <input
+                                      type="checkbox"
+                                      checked={isForeign}
+                                      onChange={(e) =>
+                                        handleUpdateSlotField(pos.id, slotIdx, {
+                                          is_foreign: e.target.checked
+                                        })
+                                      }
+                                      className="w-4 h-4 rounded accent-purple-500 cursor-pointer"
+                                    />
+                                    <span
+                                      className={`text-[9.5px] font-extrabold uppercase px-1.5 py-0.5 rounded border ${
+                                        isForeign
+                                          ? 'bg-purple-500/20 text-purple-300 border-purple-500/40'
+                                          : 'bg-slate-800/70 text-slate-500 border-slate-700/60'
+                                      }`}
+                                    >
+                                      {isForeign ? 'EST' : 'NAC'}
+                                    </span>
+                                  </label>
+                                </td>
+
+                                {/* 8. Clube Atual / Vínculo */}
+                                <td className="py-2 px-3">
+                                  <input
+                                    type="text"
+                                    value={rawClubVal}
+                                    onChange={(e) => {
+                                      const val = e.target.value
+                                      handleUpdateSlotField(pos.id, slotIdx, {
+                                        ca: val,
+                                        clube: val
+                                      })
+                                    }}
+                                    placeholder="Clube atual / vínculo..."
+                                    className="w-full bg-[#090f19] border border-slate-700/80 focus:border-emerald-500 rounded-lg px-2.5 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none"
+                                  />
+                                </td>
+
+                                {/* 9. Ação de excluir a linha (sincronizado com o campograma) */}
+                                <td className="py-2 px-3 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRemovePlayer(pos.id, slotIdx)}
+                                    title="Excluir linha (remove também do campograma)"
+                                    className="p-1.5 rounded-lg bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white border border-rose-500/30 transition cursor-pointer inline-flex items-center justify-center"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                </td>
+                              </tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        </section>
       </main>
 
       {/* 4. MODAL DE SELEÇÃO DO BANCO */}
