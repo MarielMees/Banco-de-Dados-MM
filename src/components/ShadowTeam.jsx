@@ -328,22 +328,23 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     }
   }
 
-  // Base do cálculo de métricas físicas, etárias e orçamentárias ('COMPLETO' considera todas as linhas ativas na simulação)
-  const [metricsScope, setMetricsScope] = useState('COMPLETO')
+  // Classifica uma posição da formação em 1 dos 4 macro-setores executivos: GOLEIROS, DEFESA, MEIO_CAMPO, ATAQUE
+  const getMacroSectorKey = (pos) => {
+    const id = (pos?.id || '').toLowerCase()
+    if (id === 'gl') return 'GOLEIROS'
+    if (id.startsWith('zag') || id.startsWith('lat') || id.startsWith('ala')) return 'DEFESA'
+    if (id.startsWith('vol') || id.startsWith('med') || id.startsWith('mei')) return 'MEIO_CAMPO'
+    return 'ATAQUE'
+  }
 
-  // Métricas e Cálculos Financeiros em Tempo Real (unificados com metricsScope e is_simulated_active)
+  // Métricas e Cálculos Financeiros em Tempo Real (base exclusiva: atletas com 'Ativo na Simulação' marcado)
   const budgetCeiling = activeTeam.budget_ceiling !== undefined && activeTeam.budget_ceiling !== null
     ? Number(activeTeam.budget_ceiling)
     : 2500000
 
   const payrollStats = useMemo(() => {
-    return calculateTeamPayroll(activeFormation.positions, slotsData, players, metricsScope)
-  }, [activeFormation, slotsData, players, metricsScope])
-
-  const folhaProjetada = payrollStats.folhaProjetada
-  const saldoOrcamentario = budgetCeiling - folhaProjetada
-  const isBudgetExceeded = saldoOrcamentario < 0
-  const percentualComprometido = budgetCeiling > 0 ? (folhaProjetada / budgetCeiling) * 100 : 0
+    return calculateTeamPayroll(activeFormation.positions, slotsData, players, 'COMPLETO')
+  }, [activeFormation, slotsData, players])
 
   // Mudar formação do cenário ativo
   const handleFormationChange = (fmt) => {
@@ -409,94 +410,170 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     return { age: null, birthYear: null }
   }
 
-  // Cálculo das métricas de Idade, Altura, Elenco Atual vs Alvos e Estrangeiros (respeitando is_simulated_active)
+  // Extrai altura em centímetros (ex: 1.85 -> 185, 185 -> 185)
+  const extractHeightCm = (athlete) => {
+    if (!athlete) return null
+    const rawAlt = athlete.alt !== undefined && athlete.alt !== '' ? athlete.alt : athlete.altura
+    if (rawAlt === undefined || rawAlt === null || String(rawAlt).trim() === '') return null
+    const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
+    if (isNaN(numAlt) || numAlt <= 0) return null
+    const cm = numAlt < 3 ? Math.round(numAlt * 100) : Math.round(numAlt)
+    return cm >= 140 && cm <= 230 ? cm : null
+  }
+
+  // Ordena as posições da formação de Defesa (Goleiro -> Zagueiros -> Laterais) para Ataque (Volantes -> Meias -> Extremos -> Centroavante)
+  const orderedPositionsForTable = useMemo(() => {
+    const getSectorOrderWeight = (pos) => {
+      const id = (pos.id || '').toLowerCase()
+      if (id === 'gl') return 10
+      if (id.startsWith('zag-d')) return 20
+      if (id.startsWith('zag-c')) return 25
+      if (id.startsWith('zag-e')) return 30
+      if (id.startsWith('lat-d') || id.startsWith('ala-d')) return 40
+      if (id.startsWith('lat-e') || id.startsWith('ala-e')) return 50
+      if (id.startsWith('vol')) return 60
+      if (id.startsWith('med')) return 65
+      if (id.startsWith('mei')) return 70
+      if (id.startsWith('ext') || id.startsWith('me-')) return 80
+      if (id.startsWith('ca')) return 90
+      return 100 - (pos.top || 0)
+    }
+    return [...activeFormation.positions].sort((a, b) => getSectorOrderWeight(a) - getSectorOrderWeight(b))
+  }, [activeFormation])
+
+  // Cálculo unificado de Orçamento, Folha (Elenco vs Contratações), Idade, Altura, Setores e Atletas Ativos
+  // Regra estrita: considera EXCLUSIVAMENTE os atletas com 'Ativo na Simulação' (is_simulated_active !== false)
   const teamMetrics = useMemo(() => {
-    const targetAthletes = []
+    const activeAthletesDetailed = []
     let activeOwnPlayersCount = 0
     let activeTargetsCount = 0
     let activeForeignersCount = 0
-
-    activeFormation.positions.forEach(pos => {
-      const currentSlots = slotsData[pos.id] || []
-      if (currentSlots.length === 0) return
-
-      const activeSlots = currentSlots.filter(s => s && s.is_simulated_active !== false)
-
-      const slotsToProcess = metricsScope === 'TITULARES'
-        ? (activeSlots[0] ? [activeSlots[0]] : [])
-        : activeSlots
-
-      slotsToProcess.forEach(slot => {
-        const full = resolveSlotAthlete(slot)
-        if (!full) return
-        // Ignora linhas em branco sem nome e sem id nas contagens e médias
-        if (!full.nome?.trim() && !full.id) return
-        targetAthletes.push(full)
-        if (full.is_own_player) {
-          activeOwnPlayersCount += 1
-        } else {
-          activeTargetsCount += 1
-        }
-        if (full.is_foreign) {
-          activeForeignersCount += 1
-        }
-      })
-    })
-
-    // 1. Média de Idade
+    let ownPayroll = 0
+    let targetsPayroll = 0
     let totalAge = 0
     let countAge = 0
-
-    targetAthletes.forEach(athlete => {
-      const { age } = extractAgeAndBirthYear(athlete)
-      if (age !== null && age >= 14 && age <= 55) {
-        totalAge += age
-        countAge += 1
-      }
-    })
-
-    const avgAge = countAge > 0 ? (totalAge / countAge).toFixed(1) : null
-
-    // 2. Média de Altura
     let totalHeight = 0
     let countHeight = 0
 
-    targetAthletes.forEach(athlete => {
-      const rawAlt = athlete.alt !== undefined && athlete.alt !== '' ? athlete.alt : athlete.altura
-      if (rawAlt !== undefined && rawAlt !== null && String(rawAlt).trim() !== '') {
-        const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
-        if (!isNaN(numAlt) && numAlt > 0) {
-          const cm = numAlt < 3 ? Math.round(numAlt * 100) : Math.round(numAlt)
-          if (cm >= 140 && cm <= 230) {
-            totalHeight += cm
-            countHeight += 1
-          }
+    const sectorBuckets = {
+      GOLEIROS: { key: 'GOLEIROS', label: 'Goleiros', count: 0, payroll: 0, totalHeight: 0, countHeight: 0, totalAge: 0, countAge: 0 },
+      DEFESA: { key: 'DEFESA', label: 'Linha Defensiva', count: 0, payroll: 0, totalHeight: 0, countHeight: 0, totalAge: 0, countAge: 0 },
+      MEIO_CAMPO: { key: 'MEIO_CAMPO', label: 'Meio-Campo', count: 0, payroll: 0, totalHeight: 0, countHeight: 0, totalAge: 0, countAge: 0 },
+      ATAQUE: { key: 'ATAQUE', label: 'Ataque', count: 0, payroll: 0, totalHeight: 0, countHeight: 0, totalAge: 0, countAge: 0 }
+    }
+
+    orderedPositionsForTable.forEach(pos => {
+      const currentSlots = slotsData[pos.id] || []
+      if (currentSlots.length === 0) return
+
+      const macroKey = getMacroSectorKey(pos)
+      const activeSlots = currentSlots.filter(s => s && s.is_simulated_active !== false)
+
+      activeSlots.forEach(slot => {
+        const full = resolveSlotAthlete(slot)
+        if (!full) return
+        // Ignora linhas vazias sem atleta definido nas contagens e médias
+        if (!full.nome?.trim() && !full.id) return
+
+        const sal = getAthleteSalary(full, players)
+        const { age } = extractAgeAndBirthYear(full)
+        const heightCm = extractHeightCm(full)
+        const isOwn = Boolean(full.is_own_player)
+
+        if (isOwn) {
+          activeOwnPlayersCount += 1
+          ownPayroll += sal
+        } else {
+          activeTargetsCount += 1
+          targetsPayroll += sal
         }
-      }
+
+        if (full.is_foreign) {
+          activeForeignersCount += 1
+        }
+
+        if (age !== null && age >= 14 && age <= 55) {
+          totalAge += age
+          countAge += 1
+          sectorBuckets[macroKey].totalAge += age
+          sectorBuckets[macroKey].countAge += 1
+        }
+
+        if (heightCm !== null) {
+          totalHeight += heightCm
+          countHeight += 1
+          sectorBuckets[macroKey].totalHeight += heightCm
+          sectorBuckets[macroKey].countHeight += 1
+        }
+
+        sectorBuckets[macroKey].count += 1
+        sectorBuckets[macroKey].payroll += sal
+
+        activeAthletesDetailed.push({
+          id: full.id || full.slotId,
+          nome: full.nome || '—',
+          posId: pos.id,
+          posLabel: pos.label,
+          macroSector: macroKey,
+          sectorLabel: sectorBuckets[macroKey].label,
+          isOwnPlayer: isOwn,
+          tipoLabel: isOwn ? 'Elenco' : 'Contratação',
+          clube: (full.clube || full.ca || '').trim() || '—',
+          heightCm,
+          heightStr: heightCm !== null ? `${heightCm} cm` : '—',
+          age,
+          ageStr: age !== null ? `${age} anos` : '—',
+          monthlySalary: sal,
+          seasonCost13: sal * 13
+        })
+      })
     })
 
+    const totalPayroll = ownPayroll + targetsPayroll
+    const avgAge = countAge > 0 ? (totalAge / countAge).toFixed(1) : null
     const avgHeight = countHeight > 0 ? (totalHeight / countHeight).toFixed(1) : null
+
+    const sectorSummary = ['GOLEIROS', 'DEFESA', 'MEIO_CAMPO', 'ATAQUE'].map(key => {
+      const b = sectorBuckets[key]
+      return {
+        key: b.key,
+        label: b.label,
+        count: b.count,
+        payroll: b.payroll,
+        pctOfPayroll: totalPayroll > 0 ? (b.payroll / totalPayroll) * 100 : 0,
+        avgHeight: b.countHeight > 0 ? `${(b.totalHeight / b.countHeight).toFixed(1)} cm` : '—',
+        avgAge: b.countAge > 0 ? `${(b.totalAge / b.countAge).toFixed(1)} anos` : '—'
+      }
+    })
 
     return {
       avgAge,
       countAge,
       avgHeight,
       countHeight,
-      totalConsidered: targetAthletes.length,
+      totalConsidered: activeAthletesDetailed.length,
       activeOwnPlayersCount,
       activeTargetsCount,
-      activeForeignersCount
+      activeForeignersCount,
+      ownPayroll,
+      targetsPayroll,
+      totalPayroll,
+      seasonTotal13: totalPayroll * 13,
+      sectorSummary,
+      activeAthletesDetailed
     }
-  }, [activeFormation, slotsData, players, metricsScope])
+  }, [orderedPositionsForTable, slotsData, players])
 
-  // Classifica uma posição da formação em 1 dos 4 macro-setores executivos: GOLEIROS, DEFESA, MEIO_CAMPO, ATAQUE
-  const getMacroSectorKey = (pos) => {
-    const id = (pos?.id || '').toLowerCase()
-    if (id === 'gl') return 'GOLEIROS'
-    if (id.startsWith('zag') || id.startsWith('lat') || id.startsWith('ala')) return 'DEFESA'
-    if (id.startsWith('vol') || id.startsWith('med') || id.startsWith('mei')) return 'MEIO_CAMPO'
-    return 'ATAQUE'
-  }
+  const folhaProjetada = teamMetrics.totalPayroll
+  const ownPayroll = teamMetrics.ownPayroll
+  const targetsPayroll = teamMetrics.targetsPayroll
+  const saldoOrcamentario = budgetCeiling - folhaProjetada
+  const isBudgetExceeded = saldoOrcamentario < 0
+  const percentualComprometido = budgetCeiling > 0 ? (folhaProjetada / budgetCeiling) * 100 : 0
+  const ownPctOfCeiling = budgetCeiling > 0 ? (ownPayroll / budgetCeiling) * 100 : 0
+  const targetsPctOfCeiling = budgetCeiling > 0 ? (targetsPayroll / budgetCeiling) * 100 : 0
+  const availablePctOfCeiling = budgetCeiling > 0 ? Math.max(0, (saldoOrcamentario / budgetCeiling) * 100) : 0
+
 
   // Cálculo Comparativo Multi-Cenários:
   // Coluna 1: Elenco Real (is_own_player === true, ativos)
@@ -1158,13 +1235,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   const formatAthleteBirthYear = (athlete) => {
     if (!athlete) return ''
-    const { age, birthYear } = extractAgeAndBirthYear(athlete)
-    if (birthYear && age) {
-      return `${String(birthYear).slice(-2)}' (${age}a)`
-    }
-    if (birthYear) {
-      return `${String(birthYear).slice(-2)}'`
-    }
+    const { age } = extractAgeAndBirthYear(athlete)
     if (age) {
       return `${age}a`
     }
@@ -1173,19 +1244,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
 
   const formatAthleteSubDetails = (athlete) => {
     if (!athlete) return ''
-    const club = athlete.clube || athlete.ca || ''
-    const rawAlt = athlete.alt !== undefined && athlete.alt !== '' ? athlete.alt : athlete.altura
-    let heightStr = ''
-    if (rawAlt) {
-      const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
-      if (!isNaN(numAlt) && numAlt > 0) {
-        if (numAlt < 3) {
-          heightStr = `${Math.round(numAlt * 100)} cm`
-        } else {
-          heightStr = `${Math.round(numAlt)} cm`
-        }
-      }
-    }
+    const club = (athlete.clube || athlete.ca || '').trim()
+    const heightCm = extractHeightCm(athlete)
+    const heightStr = heightCm !== null ? `${heightCm} cm` : ''
     if (club && heightStr) return `${club} • ${heightStr}`
     if (club) return club
     if (heightStr) return heightStr
@@ -1224,26 +1285,6 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     if (id.startsWith('ca')) return { tag: 'CENTROAVANTE', name: pos.label }
     return { tag: pos.id.toUpperCase(), name: pos.label }
   }
-
-  // Ordena as posições da formação de Defesa (Goleiro -> Zagueiros -> Laterais) para Ataque (Volantes -> Meias -> Extremos -> Centroavante)
-  const orderedPositionsForTable = useMemo(() => {
-    const getSectorOrderWeight = (pos) => {
-      const id = (pos.id || '').toLowerCase()
-      if (id === 'gl') return 10
-      if (id.startsWith('zag-d')) return 20
-      if (id.startsWith('zag-c')) return 25
-      if (id.startsWith('zag-e')) return 30
-      if (id.startsWith('lat-d') || id.startsWith('ala-d')) return 40
-      if (id.startsWith('lat-e') || id.startsWith('ala-e')) return 50
-      if (id.startsWith('vol')) return 60
-      if (id.startsWith('med')) return 65
-      if (id.startsWith('mei')) return 70
-      if (id.startsWith('ext') || id.startsWith('me-')) return 80
-      if (id.startsWith('ca')) return 90
-      return 100 - (pos.top || 0)
-    }
-    return [...activeFormation.positions].sort((a, b) => getSectorOrderWeight(a) - getSectorOrderWeight(b))
-  }, [activeFormation])
 
   // Candidatos para o modal de escalação com busca universal e filtro sugeridos vs todos
   const candidatePlayers = useMemo(() => {
@@ -1284,27 +1325,28 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       })
   }, [players, assigningPos, slotsData, playerSearch, playerFilterTab])
 
-  // Exportação em PDF do Campograma Tático via html-to-image (renderização nativa 1:1)
+  // Exportação em PDF Executivo Completo:
+  // 1. Topo: Captura limpa do Campograma Tático montado
+  // 2. Tabela de Resumo Financeiro (Teto Total, Gasto Elenco Atual, Gasto Reforços Simulados, Saldo Livre e % Comprometido)
+  // 3. Tabela de Balanço por Setores (Goleiros, Linha Defensiva, Meio-Campo, Ataque)
+  // 4. Tabela de Detalhamento dos Atletas Ativos (Nome, Posição, Tipo, Clube de Origem, Altura, Idade, Salário Mensal, Projeção 13 meses)
   const handleExportPdf = async () => {
     if (!pitchRef.current || isExportingPdf) return
     setIsExportingPdf(true)
 
     try {
-      // 1. Aguardar carregamento completo das fontes do navegador
       if (document.fonts && document.fonts.ready) {
         await document.fonts.ready
       }
 
       const element = pitchRef.current
 
-      // Captura o elemento com fidelidade nativa do navegador via SVG foreignObject
+      // Captura limpa do Campograma Tático ocultando apenas controles interativos marcados com data-export-hide
       const dataUrl = await toPng(element, {
         quality: 0.98,
-        pixelRatio: 2, // Garante alta resolução nítida
+        pixelRatio: 2,
         filter: (node) => {
-          // Oculta botões de adicionar (+) ou controles que não devem sair no PDF
           if (
-            node.tagName === 'BUTTON' ||
             node.classList?.contains('no-export') ||
             node.classList?.contains('no-pdf') ||
             node.getAttribute?.('data-export-hide') === 'true'
@@ -1315,7 +1357,6 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         }
       })
 
-      // Carrega as dimensões da imagem capturada
       const img = new Image()
       img.src = dataUrl
       await new Promise((resolve, reject) => {
@@ -1323,9 +1364,34 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         img.onerror = reject
       })
 
-      const headerHeight = 110
       const pdfWidth = img.width
-      const pdfHeight = img.height + headerHeight
+      const scale = pdfWidth / 1400
+      const s = (v) => Math.round(v * scale)
+      const font = (sz) => Math.max(8, Math.round(sz * scale))
+
+      const activeRows = teamMetrics.activeAthletesDetailed || []
+      const sectorRows = teamMetrics.sectorSummary || []
+
+      // Cálculo de altura dinâmica para acomodar o Campograma no topo + as 3 tabelas executivas completas sem cortes
+      const topHeaderH = s(95)
+      const pitchImageH = img.height
+      const sectionGap = s(24)
+      const summaryTableSectionH = s(135)
+      const sectorTableSectionH = s(64) + (sectorRows.length + 2) * s(28)
+      const athletesRowsCount = Math.max(1, activeRows.length)
+      const athletesTableSectionH = s(64) + (athletesRowsCount + 2) * s(26)
+      const bottomFooterH = s(50)
+
+      const pdfHeight =
+        topHeaderH +
+        pitchImageH +
+        sectionGap +
+        summaryTableSectionH +
+        sectionGap +
+        sectorTableSectionH +
+        sectionGap +
+        athletesTableSectionH +
+        bottomFooterH
 
       const pdf = new jsPDF({
         orientation: pdfWidth > pdfHeight ? 'landscape' : 'portrait',
@@ -1333,414 +1399,359 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         format: [pdfWidth, pdfHeight]
       })
 
-      // Cabeçalho Institucional Dark
-      pdf.setFillColor(6, 13, 23)
-      pdf.rect(0, 0, pdfWidth, headerHeight, 'F')
-
-      // Detalhe superior em esmeralda
-      pdf.setFillColor(16, 185, 129)
-      pdf.rect(0, 0, pdfWidth, 4, 'F')
-
-      // Título limpo (sem emojis ou caracteres corrompidos)
-      const cleanName = (activeTeam?.nome || 'PLANEJAMENTO DE ELENCO').replace(/[^\w\s\dÀ-ú-]/gi, '').trim()
-      pdf.setTextColor(255, 255, 255)
-      pdf.setFontSize(24)
-      pdf.text(`TIME SOMBRA — ${cleanName}`, 40, 45)
-
-      // Subtítulo com Métricas Táticas
-      pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(14)
-      const idadeStr = teamMetrics.avgAge
-        ? `${teamMetrics.avgAge} anos (${teamMetrics.countAge} ${metricsScope === 'TITULARES' ? 'titulares' : 'atletas'})`
-        : '—'
-      const alturaStr = teamMetrics.avgHeight
-        ? `${teamMetrics.avgHeight} cm (${teamMetrics.countHeight} ${metricsScope === 'TITULARES' ? 'titulares' : 'atletas'})`
-        : '—'
-
-      let headerSubText = `Esquema: ${selectedFormation}   |   Idade: ${idadeStr}   |   Altura: ${alturaStr}`
-      if (showFinancials) {
-        const folhaStr = `${formatBRL(folhaProjetada, false)} (${metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'})`
-        headerSubText += `   |   Folha: ${folhaStr}`
-      }
-      pdf.text(headerSubText, 40, 80)
-
-      // Estampa o campograma sem cortes
-      pdf.addImage(dataUrl, 'PNG', 0, headerHeight, img.width, img.height)
-
-      // Rodapé da Página 1
-      pdf.setFont('helvetica', 'normal')
-      pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(11)
-      if (showFinancials) {
-        pdf.text('Página 1 de 2  |  Campograma Tático', pdfWidth - 260, pdfHeight - 14)
-      } else {
-        pdf.text('Campograma Tático', pdfWidth - 160, pdfHeight - 14)
-      }
-
-      if (showFinancials) {
-        // ==========================================
-        // PÁGINA 2: DIAGNÓSTICO FINANCEIRO & SALARIAL
-        // ==========================================
-        pdf.addPage([pdfWidth, pdfHeight], pdfWidth > pdfHeight ? 'landscape' : 'portrait')
-
-      // Fator de escala dinâmico proporcional à resolução da imagem (base de referência: 1400px de largura)
-      const scale = pdfWidth / 1400
-      const s = (v) => Math.round(v * scale)
-      const font = (sz) => Math.max(7, Math.round(sz * scale))
-
-      // 1. Fundo Dark da Página 2 (#070b12)
+      // Fundo Geral Dark (#070b12)
       pdf.setFillColor(7, 11, 18)
       pdf.rect(0, 0, pdfWidth, pdfHeight, 'F')
 
-      // Faixa Superior em Esmeralda (#10b981)
+      // Cabeçalho Institucional Superior
+      pdf.setFillColor(6, 13, 23)
+      pdf.rect(0, 0, pdfWidth, topHeaderH, 'F')
       pdf.setFillColor(16, 185, 129)
-      pdf.rect(0, 0, pdfWidth, Math.max(3, s(4)), 'F')
+      pdf.rect(0, 0, pdfWidth, Math.max(4, s(5)), 'F')
 
-      // 2. Cabeçalho Institucional de Diagnóstico Financeiro
-      const headY = s(38)
+      const cleanName = (activeTeam?.nome || 'PLANEJAMENTO DE ELENCO').replace(/[^\w\s\dÀ-ú-]/gi, '').trim()
       pdf.setFont('helvetica', 'bold')
       pdf.setTextColor(255, 255, 255)
-      pdf.setFontSize(font(20))
-      pdf.text(`RELATÓRIO FINANCEIRO & DIAGNÓSTICO SALARIAL — ${cleanName.toUpperCase()}`, s(40), headY)
+      pdf.setFontSize(font(22))
+      pdf.text(`RELATÓRIO EXECUTIVO & FINANCEIRO — ${cleanName.toUpperCase()}`, s(40), s(40))
 
-      const budgetCeiling = activeTeam?.budget_ceiling || 2000000
+      const idadeStr = teamMetrics.avgAge ? `${teamMetrics.avgAge} anos (${teamMetrics.countAge} ativos)` : '—'
+      const alturaStr = teamMetrics.avgHeight ? `${teamMetrics.avgHeight} cm (${teamMetrics.countHeight} ativos)` : '—'
+      const nowStr = new Date().toLocaleDateString('pt-BR')
+
       pdf.setFont('helvetica', 'normal')
       pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(font(11))
-      const nowStr = new Date().toLocaleDateString('pt-BR')
+      pdf.setFontSize(font(12))
       pdf.text(
-        `Esquema: ${selectedFormation}   |   Teto Aprovado: ${formatBRL(budgetCeiling, false)}   |   Base: 11 Titulares + Suplentes   |   Data: ${nowStr}`,
+        `Esquema: ${selectedFormation}   |   Atletas Ativos: ${teamMetrics.totalConsidered} (${teamMetrics.activeOwnPlayersCount} Elenco / ${teamMetrics.activeTargetsCount} Contratações)   |   Idade Média: ${idadeStr}   |   Altura Média: ${alturaStr}   |   Data: ${nowStr}`,
         s(40),
-        headY + s(18)
+        s(68)
       )
 
-      // 3. Coleta de dados financeiros detalhados por posição
-      const positionsList = activeFormation.positions
-      const posFinancials = positionsList.map((pos) => {
-        const slots = slotsData[pos.id] || []
-        const titular = slots[0] || null
-        const alternates = slots.slice(1)
-        const metrics = calculatePositionSalaryMetrics(slots, players)
+      // 1. TOPO: CAPTURA LIMPA DO CAMPOGRAMA TÁTICO MONTADO
+      pdf.addImage(dataUrl, 'PNG', 0, topHeaderH, img.width, img.height)
 
-        return {
-          id: pos.id,
-          label: pos.label,
-          titular,
-          alternates,
-          titularSalary: metrics.titularSalary,
-          reservasSalary: metrics.reservasSalary,
-          totalPosSalary: metrics.totalSalary,
-          avgSalary: metrics.avgSalary,
-          countWithSalary: metrics.countWithSalary,
-          hasSalaryInversion: metrics.hasSalaryInversion,
-          secondSalary: metrics.secondSalary,
-          optionsCount: slots.length
-        }
-      })
+      let cursorY = topHeaderH + pitchImageH + sectionGap
+      const marginX = s(40)
+      const contentW = pdfWidth - marginX * 2
 
-      const totalTitularesCost = posFinancials.reduce((sum, p) => sum + p.titularSalary, 0)
-      const totalReservasCost = posFinancials.reduce((sum, p) => sum + p.reservasSalary, 0)
-      const totalSquadCost = totalTitularesCost + totalReservasCost
-      const startersCount = posFinancials.filter((p) => p.titular !== null).length
-      const totalPlayersCount = posFinancials.reduce((sum, p) => sum + p.optionsCount, 0)
-      const saldoTitulares = budgetCeiling - totalTitularesCost
-      const pctTetoTitulares = budgetCeiling > 0 ? Math.round((totalTitularesCost / budgetCeiling) * 100) : 0
-      const pctTetoSquad = budgetCeiling > 0 ? Math.round((totalSquadCost / budgetCeiling) * 100) : 0
+      // =========================================================================
+      // 2. TABELA DE RESUMO FINANCEIRO
+      // (Teto Total, Gasto Elenco Atual, Gasto Reforços Simulados, Saldo Livre e % Comprometido)
+      // =========================================================================
+      pdf.setFillColor(11, 18, 30)
+      pdf.setDrawColor(30, 41, 59)
+      pdf.setLineWidth(1)
+      pdf.roundedRect(marginX, cursorY, contentW, summaryTableSectionH, s(8), s(8), 'FD')
 
-      // 4. Quatro Cards Executivos de Resumo Financeiro
-      const cardsY = headY + s(32)
-      const cardsH = s(70)
-      const totalCardsW = pdfWidth - s(80)
-      const gapCards = s(16)
-      const cardW = Math.floor((totalCardsW - gapCards * 3) / 4)
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(16, 185, 129)
+      pdf.setFontSize(font(13))
+      pdf.text('1. TABELA DE RESUMO FINANCEIRO (BASE: ATLETAS ATIVOS NA SIMULAÇÃO)', marginX + s(18), cursorY + s(24))
 
-      const summaryCards = [
+      const sumTableY = cursorY + s(38)
+      const sumHeaderH = s(28)
+      const sumRowH = s(48)
+      const sumTableW = contentW - s(36)
+      const sumTableX = marginX + s(18)
+      const sumColW = Math.floor(sumTableW / 5)
+
+      // Cabeçalho da Tabela de Resumo Financeiro
+      pdf.setFillColor(18, 28, 45)
+      pdf.rect(sumTableX, sumHeaderH ? sumTableY : sumTableY, sumTableW, sumHeaderH, 'F')
+
+      const summaryColumns = [
         {
-          label: 'TETO SALARIAL MENSAL',
-          value: formatBRL(budgetCeiling, false),
-          subtext: 'Limite orçamentário aprovado',
-          borderColor: [51, 65, 85],
-          valColor: [255, 255, 255],
-          lblColor: [148, 163, 184]
+          title: 'TETO TOTAL MENSAL',
+          mainVal: formatBRL(budgetCeiling, true),
+          subVal: '100% do limite aprovado',
+          color: [255, 255, 255]
         },
         {
-          label: 'FOLHA 11 TITULARES',
-          value: formatBRL(totalTitularesCost, false),
-          subtext: `${pctTetoTitulares}% do teto (${startersCount}/11 titulares)`,
-          borderColor: [16, 185, 129],
-          valColor: [52, 211, 153],
-          lblColor: [110, 231, 183]
+          title: 'GASTO ELENCO ATUAL',
+          mainVal: formatBRL(ownPayroll, true),
+          subVal: `${ownPctOfCeiling.toFixed(1)}% do teto (${teamMetrics.activeOwnPlayersCount} atletas)`,
+          color: [34, 211, 238]
         },
         {
-          label: 'FOLHA ELENCO COMPLETO',
-          value: formatBRL(totalSquadCost, false),
-          subtext: `${pctTetoSquad}% do teto (${totalPlayersCount} atletas no elenco)`,
-          borderColor: [245, 158, 11],
-          valColor: [251, 191, 36],
-          lblColor: [252, 211, 77]
+          title: 'GASTO REFORÇOS SIMULADOS',
+          mainVal: formatBRL(targetsPayroll, true),
+          subVal: `${targetsPctOfCeiling.toFixed(1)}% do teto (${teamMetrics.activeTargetsCount} alvos)`,
+          color: [251, 191, 36]
         },
         {
-          label: 'SALDO ORÇAMENTÁRIO',
-          value: `${saldoTitulares >= 0 ? '+' : ''}${formatBRL(saldoTitulares, false)}`,
-          subtext: saldoTitulares >= 0 ? 'Margem disponível p/ reforços' : 'Orçamento excedente',
-          borderColor: saldoTitulares >= 0 ? [16, 185, 129] : [244, 63, 94],
-          valColor: saldoTitulares >= 0 ? [52, 211, 153] : [251, 113, 133],
-          lblColor: saldoTitulares >= 0 ? [110, 231, 183] : [253, 164, 175]
+          title: 'SALDO LIVRE NO TETO',
+          mainVal: `${saldoOrcamentario >= 0 ? '+ ' : '- '}${formatBRL(Math.abs(saldoOrcamentario), true)}`,
+          subVal: saldoOrcamentario >= 0 ? `${availablePctOfCeiling.toFixed(1)}% de margem livre` : 'Acima do teto estipulado',
+          color: saldoOrcamentario >= 0 ? [52, 211, 153] : [251, 113, 133]
+        },
+        {
+          title: '% COMPROMETIDO DO TETO',
+          mainVal: `${percentualComprometido.toFixed(1)}%`,
+          subVal: `Folha Total: ${formatBRL(folhaProjetada, false)}/mês`,
+          color: isBudgetExceeded ? [251, 113, 133] : [52, 211, 153]
         }
       ]
 
-      summaryCards.forEach((c, idx) => {
-        const cx = s(40) + idx * (cardW + gapCards)
-        pdf.setFillColor(13, 21, 36)
-        pdf.setDrawColor(c.borderColor[0], c.borderColor[1], c.borderColor[2])
-        pdf.setLineWidth(1)
-        pdf.roundedRect(cx, cardsY, cardW, cardsH, s(6), s(6), 'FD')
+      summaryColumns.forEach((col, idx) => {
+        const colX = sumTableX + idx * sumColW
+        if (idx > 0) {
+          pdf.setDrawColor(30, 41, 59)
+          pdf.line(colX, sumTableY, colX, sumTableY + sumHeaderH + sumRowH)
+        }
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(148, 163, 184)
+        pdf.setFontSize(font(9.5))
+        pdf.text(col.title, colX + s(12), sumTableY + s(18))
+
+        const valY = sumTableY + sumHeaderH
+        pdf.setFillColor(13, 22, 37)
+        pdf.rect(colX, valY, sumColW, sumRowH, 'F')
 
         pdf.setFont('helvetica', 'bold')
-        pdf.setTextColor(c.lblColor[0], c.lblColor[1], c.lblColor[2])
-        pdf.setFontSize(font(8.5))
-        pdf.text(c.label, cx + s(14), cardsY + s(18))
-
-        pdf.setFont('helvetica', 'bold')
-        pdf.setTextColor(c.valColor[0], c.valColor[1], c.valColor[2])
-        pdf.setFontSize(font(15))
-        pdf.text(c.value, cx + s(14), cardsY + s(40))
+        pdf.setTextColor(col.color[0], col.color[1], col.color[2])
+        pdf.setFontSize(font(14))
+        pdf.text(col.mainVal, colX + s(12), valY + s(22))
 
         pdf.setFont('helvetica', 'normal')
         pdf.setTextColor(148, 163, 184)
-        pdf.setFontSize(font(8))
-        pdf.text(c.subtext, cx + s(14), cardsY + s(58))
+        pdf.setFontSize(font(9))
+        pdf.text(col.subVal, colX + s(12), valY + s(38))
       })
 
-      // 5. Painéis: Gráfico de Barras (Esquerda) e Tabela Analítica (Direita)
-      const footerAreaH = s(36)
-      const panelsY = cardsY + cardsH + s(18)
-      const availablePanelH = pdfHeight - panelsY - footerAreaH
-      const panelGap = s(20)
-      const totalPanelsW = pdfWidth - s(80)
-      const panelW = Math.floor((totalPanelsW - panelGap) / 2)
+      pdf.setDrawColor(30, 41, 59)
+      pdf.rect(sumTableX, sumTableY, sumTableW, sumHeaderH + sumRowH, 'D')
 
-      const panel1X = s(40)
-      const panel2X = panel1X + panelW + panelGap
+      cursorY += summaryTableSectionH + sectionGap
 
-      // --- PAINEL 1: GRÁFICO DE BARRAS POR POSIÇÃO ---
+      // =========================================================================
+      // 3. TABELA DE BALANÇO POR SETORES (Goleiros, Linha Defensiva, Meio-Campo, Ataque)
+      // Colunas: Setor | Total de Atletas | Folha Salarial do Setor | % da Folha | Média de Altura | Média de Idade
+      // =========================================================================
       pdf.setFillColor(11, 18, 30)
       pdf.setDrawColor(30, 41, 59)
       pdf.setLineWidth(1)
-      pdf.roundedRect(panel1X, panelsY, panelW, availablePanelH, s(6), s(6), 'FD')
+      pdf.roundedRect(marginX, cursorY, contentW, sectorTableSectionH, s(8), s(8), 'FD')
 
       pdf.setFont('helvetica', 'bold')
-      pdf.setTextColor(255, 255, 255)
-      pdf.setFontSize(font(12))
-      pdf.text('DISTRIBUIÇÃO DA FOLHA POR POSIÇÃO', panel1X + s(16), panelsY + s(20))
+      pdf.setTextColor(16, 185, 129)
+      pdf.setFontSize(font(13))
+      pdf.text('2. TABELA DE BALANÇO POR SETORES (GOLEIROS, LINHA DEFENSIVA, MEIO-CAMPO, ATAQUE)', marginX + s(18), cursorY + s(24))
 
-      pdf.setFont('helvetica', 'normal')
-      pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(font(8.5))
-      pdf.text('Custo segmentado: Titular (Verde) vs Suplentes/Reservas (Âmbar)', panel1X + s(16), panelsY + s(32))
+      const secTableX = marginX + s(18)
+      const secTableW = contentW - s(36)
+      const secHeaderY = cursorY + s(38)
+      const secRowH = s(28)
 
-      const maxPosCost = Math.max(...posFinancials.map((p) => p.totalPosSalary), budgetCeiling * 0.2, 100000)
-      const usableChartH = availablePanelH - s(64)
-      const rowH = Math.floor(usableChartH / 11)
+      const secColX = [
+        secTableX + s(14),
+        secTableX + Math.round(secTableW * 0.28),
+        secTableX + Math.round(secTableW * 0.44),
+        secTableX + Math.round(secTableW * 0.64),
+        secTableX + Math.round(secTableW * 0.78),
+        secTableX + Math.round(secTableW * 0.90)
+      ]
 
-      posFinancials.forEach((p, i) => {
-        const rowY = panelsY + s(40) + i * rowH
-
-        pdf.setFont('helvetica', 'bold')
-        pdf.setTextColor(203, 213, 225)
-        pdf.setFontSize(font(8.5))
-        const labelStr = p.label.length > 15 ? p.label.slice(0, 14) + '.' : p.label
-        pdf.text(labelStr, panel1X + s(16), rowY + s(12))
-
-        const barStartX = panel1X + s(130)
-        const barMaxW = panelW - s(130) - s(110)
-        const barH = Math.max(6, Math.min(s(12), Math.floor(rowH * 0.55)))
-        const barY = rowY + Math.floor((rowH - barH) / 2)
-
-        // Trilho de fundo
-        pdf.setFillColor(18, 28, 45)
-        pdf.roundedRect(barStartX, barY, barMaxW, barH, s(2), s(2), 'F')
-
-        // Segmento Titular (Verde)
-        const titW = Math.round((p.titularSalary / maxPosCost) * barMaxW)
-        if (titW > 0) {
-          pdf.setFillColor(16, 185, 129)
-          pdf.rect(barStartX, barY, Math.min(titW, barMaxW), barH, 'F')
-        }
-
-        // Segmento Reservas (Âmbar)
-        const resW = Math.round((p.reservasSalary / maxPosCost) * barMaxW)
-        if (resW > 0) {
-          pdf.setFillColor(245, 158, 11)
-          const resX = barStartX + titW
-          const clampedResW = Math.min(resW, Math.max(0, barMaxW - titW))
-          if (clampedResW > 0) pdf.rect(resX, barY, clampedResW, barH, 'F')
-        }
-
-        // Valor total no final da barra
-        pdf.setFont('helvetica', 'normal')
-        pdf.setTextColor(226, 232, 240)
-        pdf.setFontSize(font(8))
-        const totalText = p.totalPosSalary > 0 ? formatCompactBRL(p.totalPosSalary) : '—'
-        pdf.text(totalText, barStartX + titW + resW + s(6), barY + barH - s(2))
-
-        // Alerta de inversão
-        if (p.hasSalaryInversion) {
-          pdf.setFont('helvetica', 'bold')
-          pdf.setTextColor(245, 158, 11)
-          pdf.setFontSize(font(7.5))
-          pdf.text('(!)', barStartX + barMaxW + s(60), barY + barH - s(2))
-        }
-      })
-
-      // Legenda do Gráfico
-      const legendY = panelsY + availablePanelH - s(12)
-      pdf.setFillColor(16, 185, 129)
-      pdf.rect(panel1X + s(16), legendY - s(7), s(8), s(8), 'F')
-      pdf.setTextColor(148, 163, 184)
-      pdf.setFont('helvetica', 'normal')
-      pdf.setFontSize(font(8))
-      pdf.text('Titular Ativo', panel1X + s(28), legendY)
-
-      pdf.setFillColor(245, 158, 11)
-      pdf.rect(panel1X + s(95), legendY - s(7), s(8), s(8), 'F')
-      pdf.text('Reservas / Suplentes', panel1X + s(107), legendY)
-
-      pdf.setTextColor(245, 158, 11)
-      pdf.setFont('helvetica', 'bold')
-      pdf.text('(!) Inversão (Reserva > Titular)', panel1X + s(215), legendY)
-
-      // --- PAINEL 2: TABELA ANALÍTICA POR POSIÇÃO ---
-      pdf.setFillColor(11, 18, 30)
-      pdf.setDrawColor(30, 41, 59)
-      pdf.setLineWidth(1)
-      pdf.roundedRect(panel2X, panelsY, panelW, availablePanelH, s(6), s(6), 'FD')
-
-      pdf.setFont('helvetica', 'bold')
-      pdf.setTextColor(255, 255, 255)
-      pdf.setFontSize(font(12))
-      pdf.text('TABELA ANALÍTICA POR POSIÇÃO', panel2X + s(16), panelsY + s(20))
-
-      pdf.setFont('helvetica', 'normal')
-      pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(font(8.5))
-      pdf.text('Detalhamento nominal, média ponderada e impacto no orçamento', panel2X + s(16), panelsY + s(32))
-
-      // Colunas da Tabela
-      const cX0 = panel2X + s(16)
-      const cX1 = cX0 + s(90)
-      const cX2 = cX1 + s(130)
-      const cX3 = cX2 + s(80)
-      const cX4 = cX3 + s(80)
-      const cX5 = cX4 + s(80)
-
-      const tableHeaderY = panelsY + s(40)
-      const tableHeaderH = s(18)
+      // Header Setores
       pdf.setFillColor(18, 28, 45)
-      pdf.rect(panel2X + s(12), tableHeaderY, panelW - s(24), tableHeaderH, 'F')
+      pdf.rect(secTableX, secHeaderY, secTableW, secRowH, 'F')
       pdf.setFont('helvetica', 'bold')
       pdf.setTextColor(148, 163, 184)
-      pdf.setFontSize(font(8))
-      pdf.text('POSIÇÃO', cX0, tableHeaderY + s(12))
-      pdf.text('TITULAR ATIVO', cX1, tableHeaderY + s(12))
-      pdf.text('CUSTO TIT.', cX2, tableHeaderY + s(12))
-      pdf.text('RESERVAS', cX3, tableHeaderY + s(12))
-      pdf.text('MÉDIA VAGA', cX4, tableHeaderY + s(12))
-      pdf.text('% TETO', cX5, tableHeaderY + s(12))
+      pdf.setFontSize(font(9.5))
+      pdf.text('SETOR TÁTICO', secColX[0], secHeaderY + s(18))
+      pdf.text('TOTAL DE ATLETAS', secColX[1], secHeaderY + s(18))
+      pdf.text('FOLHA SALARIAL DO SETOR', secColX[2], secHeaderY + s(18))
+      pdf.text('% DA FOLHA', secColX[3], secHeaderY + s(18))
+      pdf.text('MÉDIA DE ALTURA', secColX[4], secHeaderY + s(18))
+      pdf.text('MÉDIA DE IDADE', secColX[5], secHeaderY + s(18))
 
-      const tableBodyStartY = tableHeaderY + tableHeaderH + s(2)
-      const tableRowH = Math.floor((availablePanelH - s(65)) / 12)
+      sectorRows.forEach((sec, idx) => {
+        const rY = secHeaderY + (idx + 1) * secRowH
+        pdf.setFillColor(idx % 2 === 0 ? 13 : 16, idx % 2 === 0 ? 21 : 26, idx % 2 === 0 ? 35 : 42)
+        pdf.rect(secTableX, rY, secTableW, secRowH, 'F')
 
-      posFinancials.forEach((p, idx) => {
-        const rowY = tableBodyStartY + idx * tableRowH
-
-        if (idx % 2 === 1) {
-          pdf.setFillColor(15, 23, 38)
-          pdf.rect(panel2X + s(12), rowY, panelW - s(24), tableRowH, 'F')
-        }
-
-        if (p.hasSalaryInversion) {
-          pdf.setFillColor(45, 30, 10)
-          pdf.rect(panel2X + s(12), rowY, panelW - s(24), tableRowH, 'F')
-          pdf.setDrawColor(245, 158, 11)
-          pdf.setLineWidth(1)
-          pdf.line(panel2X + s(12), rowY, panel2X + s(12), rowY + tableRowH)
-        }
-
-        // Posição
         pdf.setFont('helvetica', 'bold')
-        pdf.setTextColor(226, 232, 240)
-        pdf.setFontSize(font(8))
-        pdf.text(p.label.length > 13 ? p.label.slice(0, 12) + '.' : p.label, cX0, rowY + s(11))
+        pdf.setTextColor(241, 245, 249)
+        pdf.setFontSize(font(10))
+        pdf.text(sec.label, secColX[0], rY + s(18))
 
-        // Titular
         pdf.setFont('helvetica', 'normal')
-        const titName = p.titular
-          ? p.titular.nome.length > 18
-            ? p.titular.nome.slice(0, 17) + '.'
-            : p.titular.nome
-          : '— Vago'
-        pdf.setTextColor(p.titular ? 203 : 100, p.titular ? 213 : 116, p.titular ? 225 : 139)
-        pdf.text(titName, cX1, rowY + s(11))
-
-        // Custo Titular
-        pdf.setTextColor(52, 211, 153)
-        pdf.text(p.titularSalary > 0 ? formatCompactBRL(p.titularSalary) : '—', cX2, rowY + s(11))
-
-        // Reservas
-        pdf.setTextColor(251, 191, 36)
-        pdf.text(p.reservasSalary > 0 ? formatCompactBRL(p.reservasSalary) : '—', cX3, rowY + s(11))
-
-        // Média Vaga
         pdf.setTextColor(203, 213, 225)
-        pdf.text(p.avgSalary > 0 ? formatCompactBRL(p.avgSalary) : '—', cX4, rowY + s(11))
+        pdf.text(`${sec.count} ${sec.count === 1 ? 'atleta' : 'atletas'}`, secColX[1], rY + s(18))
 
-        // % Teto
-        const pctPos = budgetCeiling > 0 ? ((p.totalPosSalary / budgetCeiling) * 100).toFixed(1) : '0.0'
-        pdf.setTextColor(148, 163, 184)
-        pdf.text(`${pctPos}%`, cX5, rowY + s(11))
+        pdf.setFont('helvetica', 'bold')
+        pdf.setTextColor(251, 191, 36)
+        pdf.text(formatBRL(sec.payroll, true), secColX[2], rY + s(18))
+
+        pdf.setTextColor(52, 211, 153)
+        pdf.text(`${sec.pctOfPayroll.toFixed(1)}%`, secColX[3], rY + s(18))
+
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(203, 213, 225)
+        pdf.text(sec.avgHeight, secColX[4], rY + s(18))
+        pdf.text(sec.avgAge, secColX[5], rY + s(18))
       })
 
-      // Linha de Rodapé da Tabela: TOTAL GERAL
-      const totalRowY = tableBodyStartY + 11 * tableRowH + s(2)
+      // Linha Totalizadora de Setores
+      const secTotalY = secHeaderY + (sectorRows.length + 1) * secRowH
       pdf.setFillColor(10, 35, 26)
-      pdf.setDrawColor(16, 185, 129)
+      pdf.rect(secTableX, secTotalY, secTableW, secRowH, 'F')
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(font(10))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text('TOTAL / MÉDIA GERAL DOS ATIVOS', secColX[0], secTotalY + s(18))
+      pdf.text(`${teamMetrics.totalConsidered} atletas ativos`, secColX[1], secTotalY + s(18))
+      pdf.setTextColor(251, 191, 36)
+      pdf.text(formatBRL(folhaProjetada, true), secColX[2], secTotalY + s(18))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text(folhaProjetada > 0 ? '100.0%' : '0.0%', secColX[3], secTotalY + s(18))
+      pdf.setTextColor(241, 245, 249)
+      pdf.text(teamMetrics.avgHeight ? `${teamMetrics.avgHeight} cm` : '—', secColX[4], secTotalY + s(18))
+      pdf.text(teamMetrics.avgAge ? `${teamMetrics.avgAge} anos` : '—', secColX[5], secTotalY + s(18))
+
+      pdf.setDrawColor(30, 41, 59)
+      pdf.rect(secTableX, secHeaderY, secTableW, (sectorRows.length + 2) * secRowH, 'D')
+
+      cursorY += sectorTableSectionH + sectionGap
+
+      // =========================================================================
+      // 4. TABELA DE DETALHAMENTO DOS ATLETAS ATIVOS
+      // Colunas: Nome | Posição | Tipo (Elenco ou Contratação) | Clube de Origem | Altura | Idade | Salário Mensal | Projeção de Custo da Temporada (13 meses)
+      // =========================================================================
+      pdf.setFillColor(11, 18, 30)
+      pdf.setDrawColor(30, 41, 59)
       pdf.setLineWidth(1)
-      pdf.rect(panel2X + s(12), totalRowY, panelW - s(24), tableRowH + s(2), 'FD')
+      pdf.roundedRect(marginX, cursorY, contentW, athletesTableSectionH, s(8), s(8), 'FD')
 
       pdf.setFont('helvetica', 'bold')
-      pdf.setFontSize(font(8.5))
-      pdf.setTextColor(52, 211, 153)
-      pdf.text('TOTAL GERAL', cX0, totalRowY + s(12))
-      pdf.text(`${startersCount}/11 Titulares`, cX1, totalRowY + s(12))
-      pdf.text(formatCompactBRL(totalTitularesCost), cX2, totalRowY + s(12))
-      pdf.setTextColor(251, 191, 36)
-      pdf.text(formatCompactBRL(totalReservasCost), cX3, totalRowY + s(12))
-      pdf.setTextColor(255, 255, 255)
-      pdf.text(formatCompactBRL(totalSquadCost), cX4, totalRowY + s(12))
-      pdf.setTextColor(52, 211, 153)
-      pdf.text(`${pctTetoSquad}%`, cX5, totalRowY + s(12))
+      pdf.setTextColor(16, 185, 129)
+      pdf.setFontSize(font(13))
+      pdf.text('3. TABELA DE DETALHAMENTO DOS ATLETAS ATIVOS (PROJEÇÃO MENSAL E TEMPORADA 13 MESES)', marginX + s(18), cursorY + s(24))
 
-      // 6. Rodapé Confidencial da Página 2
-      const footerY = pdfHeight - s(14)
+      const athTableX = marginX + s(18)
+      const athTableW = contentW - s(36)
+      const athHeaderY = cursorY + s(38)
+      const athRowH = s(26)
+
+      const athColX = [
+        athTableX + s(12),                          // Nome
+        athTableX + Math.round(athTableW * 0.21),   // Posição
+        athTableX + Math.round(athTableW * 0.34),   // Tipo (Elenco ou Contratação)
+        athTableX + Math.round(athTableW * 0.46),   // Clube de Origem
+        athTableX + Math.round(athTableW * 0.60),   // Altura
+        athTableX + Math.round(athTableW * 0.68),   // Idade
+        athTableX + Math.round(athTableW * 0.76),   // Salário Mensal
+        athTableX + Math.round(athTableW * 0.88)    // Projeção Temporada (13 meses)
+      ]
+
+      // Header Detalhamento de Atletas
+      pdf.setFillColor(18, 28, 45)
+      pdf.rect(athTableX, athHeaderY, athTableW, athRowH, 'F')
+      pdf.setFont('helvetica', 'bold')
+      pdf.setTextColor(148, 163, 184)
+      pdf.setFontSize(font(9))
+      pdf.text('NOME DO ATLETA', athColX[0], athHeaderY + s(17))
+      pdf.text('POSIÇÃO', athColX[1], athHeaderY + s(17))
+      pdf.text('TIPO', athColX[2], athHeaderY + s(17))
+      pdf.text('CLUBE DE ORIGEM', athColX[3], athHeaderY + s(17))
+      pdf.text('ALTURA', athColX[4], athHeaderY + s(17))
+      pdf.text('IDADE', athColX[5], athHeaderY + s(17))
+      pdf.text('SALÁRIO MENSAL', athColX[6], athHeaderY + s(17))
+      pdf.text('CUSTO TEMPORADA (13M)', athColX[7], athHeaderY + s(17))
+
+      if (activeRows.length === 0) {
+        const emptyRowY = athHeaderY + athRowH
+        pdf.setFillColor(13, 21, 35)
+        pdf.rect(athTableX, emptyRowY, athTableW, athRowH, 'F')
+        pdf.setFont('helvetica', 'normal')
+        pdf.setTextColor(148, 163, 184)
+        pdf.setFontSize(font(9.5))
+        pdf.text('Nenhum atleta marcado como Ativo na Simulação neste cenário.', athColX[0], emptyRowY + s(17))
+      } else {
+        activeRows.forEach((ath, idx) => {
+          const rY = athHeaderY + (idx + 1) * athRowH
+          pdf.setFillColor(idx % 2 === 0 ? 13 : 16, idx % 2 === 0 ? 21 : 26, idx % 2 === 0 ? 35 : 42)
+          pdf.rect(athTableX, rY, athTableW, athRowH, 'F')
+
+          // Nome
+          pdf.setFont('helvetica', 'bold')
+          pdf.setTextColor(255, 255, 255)
+          pdf.setFontSize(font(9.5))
+          const nomeTrunc = ath.nome.length > 26 ? ath.nome.slice(0, 25) + '.' : ath.nome
+          pdf.text(nomeTrunc, athColX[0], rY + s(17))
+
+          // Posição
+          pdf.setFont('helvetica', 'normal')
+          pdf.setTextColor(203, 213, 225)
+          const posTrunc = ath.posLabel.length > 18 ? ath.posLabel.slice(0, 17) + '.' : ath.posLabel
+          pdf.text(posTrunc, athColX[1], rY + s(17))
+
+          // Tipo (Elenco vs Contratação)
+          pdf.setFont('helvetica', 'bold')
+          if (ath.isOwnPlayer) {
+            pdf.setTextColor(34, 211, 238)
+          } else {
+            pdf.setTextColor(251, 191, 36)
+          }
+          pdf.text(ath.tipoLabel, athColX[2], rY + s(17))
+
+          // Clube de Origem
+          pdf.setFont('helvetica', 'normal')
+          pdf.setTextColor(203, 213, 225)
+          const clubTrunc = ath.clube.length > 20 ? ath.clube.slice(0, 19) + '.' : ath.clube
+          pdf.text(clubTrunc, athColX[3], rY + s(17))
+
+          // Altura
+          pdf.text(ath.heightStr, athColX[4], rY + s(17))
+
+          // Idade
+          pdf.text(ath.ageStr, athColX[5], rY + s(17))
+
+          // Salário Mensal
+          pdf.setFont('helvetica', 'bold')
+          pdf.setTextColor(251, 191, 36)
+          pdf.text(formatBRL(ath.monthlySalary, true), athColX[6], rY + s(17))
+
+          // Projeção de Custo da Temporada (13 meses)
+          pdf.setTextColor(52, 211, 153)
+          pdf.text(formatBRL(ath.seasonCost13, true), athColX[7], rY + s(17))
+        })
+      }
+
+      // Linha de Rodapé: Total Mensal e Total Temporada (13 meses)
+      const athTotalY = athHeaderY + (athletesRowsCount + 1) * athRowH
+      pdf.setFillColor(10, 35, 26)
+      pdf.rect(athTableX, athTotalY, athTableW, athRowH, 'F')
+      pdf.setFont('helvetica', 'bold')
+      pdf.setFontSize(font(10))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text(`TOTAL CONSOLIDADO (${teamMetrics.totalConsidered} ATLETAS ATIVOS)`, athColX[0], athTotalY + s(17))
+      pdf.setTextColor(34, 211, 238)
+      pdf.text(`${teamMetrics.activeOwnPlayersCount} Elenco | ${teamMetrics.activeTargetsCount} Contratações`, athColX[2], athTotalY + s(17))
+      pdf.setTextColor(251, 191, 36)
+      pdf.text(formatBRL(folhaProjetada, true), athColX[6], athTotalY + s(17))
+      pdf.setTextColor(52, 211, 153)
+      pdf.text(formatBRL(teamMetrics.seasonTotal13, true), athColX[7], athTotalY + s(17))
+
+      pdf.setDrawColor(30, 41, 59)
+      pdf.rect(athTableX, athHeaderY, athTableW, (athletesRowsCount + 2) * athRowH, 'D')
+
+      // Rodapé Institucional
+      const footerY = pdfHeight - s(18)
       pdf.setFont('helvetica', 'normal')
       pdf.setTextColor(100, 116, 139)
-      pdf.setFontSize(font(8.5))
-      pdf.text('DOCUMENTO CONFIDENCIAL — DEPARTAMENTO DE INTELIGÊNCIA & SCOUT', s(40), footerY)
+      pdf.setFontSize(font(9.5))
+      pdf.text('DOCUMENTO EXECUTIVO CONFIDENCIAL — DEPARTAMENTO DE INTELIGÊNCIA & SCOUT', marginX, footerY)
       const userTag = user?.email || 'Sistema'
       pdf.text(
-        `Extração: ${new Date().toLocaleString('pt-BR')}   |   Operador: ${userTag}`,
-        pdfWidth / 2 - s(120),
+        `Gerado em: ${new Date().toLocaleString('pt-BR')}   |   Operador: ${userTag}`,
+        pdfWidth - marginX - s(310),
         footerY
       )
-      pdf.setFont('helvetica', 'bold')
-      pdf.text('Página 2 de 2', pdfWidth - s(100), footerY)
-    }
 
-    // Download imediato
       const safeFileName = cleanName.replace(/\s+/g, '_') || 'cenario'
       const fileDate = new Date().toISOString().slice(0, 10)
-      pdf.save(`Time_Sombra_${safeFileName}_${selectedFormation}_${fileDate}.pdf`)
+      pdf.save(`Relatorio_Executivo_${safeFileName}_${selectedFormation}_${fileDate}.pdf`)
     } catch (err) {
       console.error('Erro ao gerar PDF via html-to-image:', err)
       alert('Houve um erro ao gerar o PDF. Verifique o console.')
@@ -1748,6 +1759,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       setIsExportingPdf(false)
     }
   }
+
 
   return (
     <div className="min-h-screen bg-[#070b12] text-slate-200 font-sans pb-16 select-none flex flex-col">
@@ -1964,61 +1976,26 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
         {/* PAINEL EXECUTIVO: SIMULADOR DE ORÇAMENTO E FOLHA SALARIAL */}
         {showFinancials && (
           <div className="w-full max-w-[1400px] mb-3 bg-gradient-to-r from-[#0a111e] via-[#0d1728] to-[#0a111e] border border-slate-800 rounded-2xl p-3.5 md:p-4 shadow-xl backdrop-blur-md animate-in fade-in slide-in-from-top-2 duration-300">
-          {/* Topo do Painel de Orçamento */}
-          <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 mb-3 border-b border-slate-800/80">
-            <div className="flex items-center gap-2.5">
-              <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-                <Wallet className="w-4 h-4" />
-              </div>
-              <div>
-                <h2 className="text-xs md:text-sm font-black text-white tracking-wide uppercase flex items-center gap-2">
-                  <span>Simulador de Orçamento & Folha Salarial</span>
-                  <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 lowercase">
-                    tempo real
-                  </span>
-                </h2>
-                <p className="text-[10px] text-slate-400 transition-colors duration-300">
-                  {metricsScope === 'TITULARES'
-                    ? 'Projeção baseada nos 11 titulares ativos na formação selecionada'
-                    : 'Projeção baseada em todos os atletas do elenco (1ª, 2ª e 3ª opções)'}
-                </p>
-              </div>
-            </div>
-
-            {/* Controles do Topo: Base de Cálculo + Presets Rápidos de Teto */}
-            <div className="flex items-center gap-2.5 flex-wrap">
-              {/* Seletor Unificado de Base de Cálculo */}
-              <div className="flex items-center gap-1 bg-[#090e17] p-1 rounded-xl border border-slate-800 text-xs shadow-inner">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 px-1 hidden sm:inline">
-                  Base:
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setMetricsScope('TITULARES')}
-                  className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    metricsScope === 'TITULARES'
-                      ? 'bg-slate-700 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                  }`}
-                  title="Calcular folha e métricas baseado apenas nos 11 titulares ativos"
-                >
-                  Titulares (11)
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setMetricsScope('COMPLETO')}
-                  className={`px-2.5 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                    metricsScope === 'COMPLETO'
-                      ? 'bg-slate-700 text-white shadow-sm'
-                      : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                  }`}
-                  title="Calcular folha e métricas com todo o elenco (1ª, 2ª e 3ª opções)"
-                >
-                  Elenco Completo
-                </button>
+            {/* Topo do Painel de Orçamento */}
+            <div className="flex flex-wrap items-center justify-between gap-2.5 pb-2.5 mb-3 border-b border-slate-800/80">
+              <div className="flex items-center gap-2.5">
+                <div className="w-7 h-7 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
+                  <Wallet className="w-4 h-4" />
+                </div>
+                <div>
+                  <h2 className="text-xs md:text-sm font-black text-white tracking-wide uppercase flex items-center gap-2">
+                    <span>Simulador de Orçamento &amp; Divisão do Teto Salarial</span>
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-950/80 text-emerald-400 border border-emerald-800/60 lowercase">
+                      tempo real
+                    </span>
+                  </h2>
+                  <p className="text-[10px] text-slate-400">
+                    Base de cálculo exclusiva: atletas com a caixinha <strong className="text-emerald-300">&quot;Ativo na Simulação&quot;</strong> marcada ({teamMetrics.totalConsidered} ativos no momento)
+                  </p>
+                </div>
               </div>
 
-              {/* Presets Rápidos de Teto Salarial */}
+              {/* Presets Rápidos de Teto Orçamentário */}
               <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar py-0.5">
                 <span className="text-[10px] font-bold uppercase text-slate-500 mr-1 hidden sm:inline">
                   Atalhos de Teto:
@@ -2039,182 +2016,302 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 ))}
               </div>
             </div>
-          </div>
 
-          {/* 3 Cartões de Métricas Principais */}
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5 md:gap-4">
-            {/* Métrica 1: Teto Salarial Mensal */}
-            <div className="bg-[#111c2e] border border-slate-700/70 rounded-xl p-3 flex flex-col justify-between shadow-sm relative group">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <DollarSign className="w-3.5 h-3.5 text-cyan-400" />
-                  Teto Salarial Mensal
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingBudgetCeiling(!isEditingBudgetCeiling)}
-                  className="text-slate-400 hover:text-cyan-300 p-1 rounded hover:bg-slate-800 transition cursor-pointer"
-                  title="Editar teto orçamentário mensal"
-                >
-                  <Pencil className="w-3 h-3 text-cyan-400" />
-                </button>
-              </div>
-
-              {isEditingBudgetCeiling ? (
-                <div className="my-0.5">
-                  <input
-                    type="text"
-                    defaultValue={formatBRL(budgetCeiling, true)}
-                    onBlur={(e) => {
-                      handleBudgetCeilingChange(e.target.value)
-                      setIsEditingBudgetCeiling(false)
-                    }}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') {
-                        handleBudgetCeilingChange(e.currentTarget.value)
-                        setIsEditingBudgetCeiling(false)
-                      } else if (e.key === 'Escape') {
-                        setIsEditingBudgetCeiling(false)
-                      }
-                    }}
-                    autoFocus
-                    placeholder="R$ 2.000.000,00"
-                    className="w-full bg-[#080d16] border border-cyan-500 rounded px-2.5 py-1 text-base font-black text-cyan-300 focus:outline-none focus:ring-1 focus:ring-cyan-400"
-                  />
+            {/* 4 Cartões de Progresso Orçamentário */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2.5 md:gap-3.5">
+              {/* Card 1: Teto Orçamentário Total */}
+              <div className="bg-[#111c2e] border border-slate-700/70 rounded-xl p-3 flex flex-col justify-between shadow-sm relative group">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <DollarSign className="w-3.5 h-3.5 text-slate-300" />
+                    Teto Orçamentário Total
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingBudgetCeiling(!isEditingBudgetCeiling)}
+                    className="text-slate-400 hover:text-emerald-300 p-1 rounded hover:bg-slate-800 transition cursor-pointer"
+                    title="Editar teto orçamentário mensal"
+                  >
+                    <Pencil className="w-3 h-3 text-emerald-400" />
+                  </button>
                 </div>
-              ) : (
-                <div
-                  onClick={() => setIsEditingBudgetCeiling(true)}
-                  className="cursor-pointer group-hover:text-cyan-300 transition-colors my-0.5"
-                  title="Clique para editar valor do teto"
-                >
-                  <div className="text-lg md:text-xl font-black text-white tracking-tight">
-                    {formatBRL(budgetCeiling, true)}
+
+                {isEditingBudgetCeiling ? (
+                  <div className="my-0.5">
+                    <input
+                      type="text"
+                      defaultValue={formatBRL(budgetCeiling, true)}
+                      onBlur={(e) => {
+                        handleBudgetCeilingChange(e.target.value)
+                        setIsEditingBudgetCeiling(false)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          handleBudgetCeilingChange(e.currentTarget.value)
+                          setIsEditingBudgetCeiling(false)
+                        } else if (e.key === 'Escape') {
+                          setIsEditingBudgetCeiling(false)
+                        }
+                      }}
+                      autoFocus
+                      placeholder="R$ 1.000.000,00"
+                      className="w-full bg-[#080d16] border border-emerald-500 rounded px-2.5 py-1 text-base font-black text-emerald-300 focus:outline-none focus:ring-1 focus:ring-emerald-400"
+                    />
+                  </div>
+                ) : (
+                  <div
+                    onClick={() => setIsEditingBudgetCeiling(true)}
+                    className="cursor-pointer group-hover:text-emerald-300 transition-colors my-0.5"
+                    title="Clique para editar o Teto Orçamentário Total"
+                  >
+                    <div className="text-lg md:text-xl font-black text-white tracking-tight">
+                      {formatBRL(budgetCeiling, true)}
+                    </div>
+                  </div>
+                )}
+
+                <div className="mt-1.5">
+                  <div className="w-full h-1.5 rounded-full bg-slate-800 overflow-hidden mb-1">
+                    <div className="h-full w-full bg-slate-400 rounded-full" />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                    <span className="truncate">100% do limite mensal</span>
+                    <span className="text-emerald-400/90 font-semibold shrink-0 ml-1">clique p/ editar</span>
                   </div>
                 </div>
-              )}
-
-              <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
-                <span className="truncate">Definido p/ {activeTeam.nome}</span>
-                <span className="text-cyan-400/80 font-medium shrink-0 ml-1">clique p/ editar</span>
-              </div>
-            </div>
-
-            {/* Métrica 2: Folha Projetada Atual */}
-            <div className="bg-[#111c2e] border border-slate-700/70 rounded-xl p-3 flex flex-col justify-between shadow-sm">
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                  <TrendingUp className="w-3.5 h-3.5 text-amber-400" />
-                  Folha Projetada Atual
-                </span>
-                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-300 border border-amber-500/30 transition-all duration-300">
-                  {metricsScope === 'TITULARES'
-                    ? `${payrollStats.startersCount}/11 titulares definidos`
-                    : `${payrollStats.totalAthletesCount} atletas no elenco`}
-                </span>
               </div>
 
+              {/* Card 2: Gasto Real do Elenco (Atletas Meu Jogador/Elenco ativos) */}
+              <div className="bg-[#111c2e] border border-cyan-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-cyan-300 flex items-center gap-1.5">
+                    <UserCheck className="w-3.5 h-3.5 text-cyan-400" />
+                    Gasto Real do Elenco
+                  </span>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">
+                    {ownPctOfCeiling.toFixed(1)}% do teto
+                  </span>
+                </div>
+
+                <div className="text-lg md:text-xl font-black text-cyan-300 tracking-tight my-0.5">
+                  {formatBRL(ownPayroll, true)}
+                </div>
+
+                <div className="mt-1.5">
+                  <div className="w-full h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden mb-1">
+                    <div
+                      className="h-full bg-cyan-400 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, ownPctOfCeiling)}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                    <span>Apenas &quot;Elenco&quot; ativos</span>
+                    <span className="text-cyan-300 font-bold">
+                      {teamMetrics.activeOwnPlayersCount} {teamMetrics.activeOwnPlayersCount === 1 ? 'atleta' : 'atletas'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 3: Gasto de Contratações (Atletas Alvo/Mercado ativos) */}
+              <div className="bg-[#111c2e] border border-amber-500/30 rounded-xl p-3 flex flex-col justify-between shadow-sm">
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+                    <Target className="w-3.5 h-3.5 text-amber-400" />
+                    Gasto de Contratações
+                  </span>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    {targetsPctOfCeiling.toFixed(1)}% do teto
+                  </span>
+                </div>
+
+                <div className="text-lg md:text-xl font-black text-amber-300 tracking-tight my-0.5">
+                  {formatBRL(targetsPayroll, true)}
+                </div>
+
+                <div className="mt-1.5">
+                  <div className="w-full h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden mb-1">
+                    <div
+                      className="h-full bg-amber-400 rounded-full transition-all duration-500"
+                      style={{ width: `${Math.min(100, targetsPctOfCeiling)}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] text-slate-400 flex items-center justify-between">
+                    <span>Apenas &quot;Alvo/Mercado&quot; ativos</span>
+                    <span className="text-amber-300 font-bold">
+                      {teamMetrics.activeTargetsCount} {teamMetrics.activeTargetsCount === 1 ? 'alvo' : 'alvos'}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Card 4: Saldo Disponível (Margem Livre no Teto Salarial) */}
               <div
-                key={`folha-${metricsScope}`}
-                className="text-lg md:text-xl font-black text-amber-300 tracking-tight my-0.5 transition-all duration-300 animate-in fade-in"
+                className={`border rounded-xl p-3 flex flex-col justify-between shadow-sm transition-all duration-300 ${
+                  isBudgetExceeded
+                    ? 'bg-rose-950/25 border-rose-500/60 shadow-rose-950/40'
+                    : 'bg-emerald-950/25 border-emerald-500/50 shadow-emerald-950/30'
+                }`}
               >
-                {formatBRL(folhaProjetada, true)}
-              </div>
+                <div className="flex items-center justify-between mb-1">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-200 flex items-center gap-1.5">
+                    {isBudgetExceeded ? (
+                      <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-bounce" />
+                    ) : (
+                      <Coins className="w-3.5 h-3.5 text-emerald-400" />
+                    )}
+                    Saldo Disponível
+                  </span>
+                  <span
+                    className={`text-[10px] font-black px-1.5 py-0.5 rounded border ${
+                      isBudgetExceeded
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                    }`}
+                  >
+                    {isBudgetExceeded
+                      ? `+${(percentualComprometido - 100).toFixed(1)}% acima`
+                      : `${availablePctOfCeiling.toFixed(1)}% livre`}
+                  </span>
+                </div>
 
-              <div className="text-[10px] text-slate-400 mt-1 flex items-center justify-between">
-                <span>
-                  {metricsScope === 'TITULARES'
-                    ? 'Soma dos 11 titulares ativos'
-                    : 'Soma de todo o elenco do campograma'}
-                </span>
-                <span className="text-slate-500 font-medium">
-                  {metricsScope === 'TITULARES'
-                    ? `${payrollStats.customSalaryCount} salários definidos`
-                    : `${payrollStats.athletesWithSalaryCount || payrollStats.totalAthletesCount} atletas com salário definido`}
-                </span>
-              </div>
-            </div>
-
-            {/* Métrica 3: Saldo / Variação */}
-            <div
-              className={`border rounded-xl p-3 flex flex-col justify-between shadow-sm transition-all duration-300 ${
-                isBudgetExceeded
-                  ? 'bg-rose-950/25 border-rose-500/60 shadow-rose-950/40'
-                  : 'bg-emerald-950/25 border-emerald-500/50 shadow-emerald-950/30'
-              }`}
-            >
-              <div className="flex items-center justify-between mb-1">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
-                  {isBudgetExceeded ? (
-                    <AlertTriangle className="w-3.5 h-3.5 text-rose-400 animate-bounce" />
-                  ) : (
-                    <Coins className="w-3.5 h-3.5 text-emerald-400" />
-                  )}
-                  Saldo / Variação
-                </span>
-                <span
-                  className={`text-[9.5px] font-extrabold px-2 py-0.5 rounded-full border transition-all duration-300 ${
-                    isBudgetExceeded
-                      ? 'bg-rose-500/20 text-rose-300 border-rose-500/40 animate-pulse'
-                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40'
+                <div
+                  className={`text-lg md:text-xl font-black tracking-tight my-0.5 ${
+                    isBudgetExceeded ? 'text-rose-400' : 'text-emerald-300'
                   }`}
                 >
-                  {isBudgetExceeded ? 'TETO ESTOURADO' : 'DENTRO DO TETO'}
+                  {isBudgetExceeded
+                    ? `- ${formatBRL(Math.abs(saldoOrcamentario), true)}`
+                    : `+ ${formatBRL(saldoOrcamentario, true)}`}
+                </div>
+
+                <div className="mt-1.5">
+                  <div className="w-full h-1.5 rounded-full bg-slate-900 border border-slate-800 overflow-hidden mb-1">
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${
+                        isBudgetExceeded ? 'bg-rose-500' : 'bg-emerald-400'
+                      }`}
+                      style={{ width: `${isBudgetExceeded ? 100 : Math.min(100, availablePctOfCeiling)}%` }}
+                    />
+                  </div>
+                  <div className="text-[10px] flex items-center justify-between font-semibold">
+                    <span className={isBudgetExceeded ? 'text-rose-300' : 'text-emerald-400'}>
+                      Folha Ativa: {formatBRL(folhaProjetada, false)}
+                    </span>
+                    <span className="text-slate-300">
+                      {percentualComprometido.toFixed(1)}% usado
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Gráfico em Barra Segmentada / Empilhada: Divisão Visual do Teto Orçamentário */}
+            <div className="mt-3.5 pt-3 border-t border-slate-800/70">
+              <div className="flex flex-wrap items-center justify-between gap-2 text-[11px] mb-2">
+                <div className="flex items-center gap-2">
+                  <span className="font-extrabold uppercase tracking-wider text-slate-300">
+                    Gráfico de Composição do Teto Orçamentário:
+                  </span>
+                  <span
+                    className={`font-black px-2 py-0.5 rounded-full text-[10px] border ${
+                      isBudgetExceeded
+                        ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                        : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                    }`}
+                  >
+                    {percentualComprometido.toFixed(1)}% Comprometido ({formatBRL(folhaProjetada, true)} de {formatBRL(budgetCeiling, true)})
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-400 font-semibold">
+                  Projeção Temporada (13 meses): <strong className="text-emerald-300">{formatBRL(teamMetrics.seasonTotal13, false)}</strong>
                 </span>
               </div>
 
-              <div
-                key={`saldo-${metricsScope}`}
-                className={`text-lg md:text-xl font-black tracking-tight my-0.5 transition-all duration-300 animate-in fade-in ${
-                  isBudgetExceeded ? 'text-rose-400' : 'text-emerald-300'
-                }`}
-              >
-                {isBudgetExceeded
-                  ? `- ${formatBRL(Math.abs(saldoOrcamentario), true)}`
-                  : `+ ${formatBRL(saldoOrcamentario, true)}`}
-              </div>
+              {/* Barra Empilhada Segmentada */}
+              {(() => {
+                const baseRef = Math.max(budgetCeiling, folhaProjetada, 1)
+                const ownBarWidth = Math.min(100, (ownPayroll / baseRef) * 100)
+                const targetsBarWidth = Math.min(100 - ownBarWidth, (targetsPayroll / baseRef) * 100)
+                const freeBarWidth = Math.max(0, 100 - ownBarWidth - targetsBarWidth)
 
-              <div className="text-[10px] mt-1 flex items-center justify-between font-semibold">
-                <span className={isBudgetExceeded ? 'text-rose-300/90' : 'text-emerald-400/90'}>
-                  {isBudgetExceeded ? 'Excedente (necessita ajuste)' : 'Margem disponível na folha'}
-                </span>
-                <span className="text-slate-400">
-                  {percentualComprometido.toFixed(1)}% utilizado
-                </span>
-              </div>
+                return (
+                  <>
+                    <div className="w-full h-4 rounded-xl bg-[#070c15] border border-slate-700/80 overflow-hidden flex p-0.5 gap-0.5 shadow-inner">
+                      {ownBarWidth > 0 && (
+                        <div
+                          className="h-full bg-gradient-to-r from-cyan-500 to-cyan-400 first:rounded-l-lg last:rounded-r-lg transition-all duration-500"
+                          style={{ width: `${ownBarWidth}%` }}
+                          title={`Gasto Real do Elenco: ${formatBRL(ownPayroll, true)} (${ownPctOfCeiling.toFixed(1)}% do teto)`}
+                        />
+                      )}
+                      {targetsBarWidth > 0 && (
+                        <div
+                          className={`h-full transition-all duration-500 first:rounded-l-lg last:rounded-r-lg ${
+                            isBudgetExceeded
+                              ? 'bg-gradient-to-r from-amber-500 to-rose-500'
+                              : 'bg-gradient-to-r from-amber-500 to-amber-400'
+                          }`}
+                          style={{ width: `${targetsBarWidth}%` }}
+                          title={`Gasto de Contratações: ${formatBRL(targetsPayroll, true)} (${targetsPctOfCeiling.toFixed(1)}% do teto)`}
+                        />
+                      )}
+                      {freeBarWidth > 0 && (
+                        <div
+                          className="h-full bg-emerald-500/25 border border-emerald-500/30 first:rounded-l-lg last:rounded-r-lg transition-all duration-500"
+                          style={{ width: `${freeBarWidth}%` }}
+                          title={`Saldo Disponível: ${formatBRL( Math.max(0, saldoOrcamentario), true)} (${availablePctOfCeiling.toFixed(1)}% do teto)`}
+                        />
+                      )}
+                    </div>
+
+                    {/* Legenda Analítica da Barra Segmentada com R$ e % */}
+                    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[10.5px]">
+                      <div className="flex flex-wrap items-center gap-4">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-cyan-400 inline-block" />
+                          <span className="text-slate-400">Gasto Real do Elenco:</span>
+                          <strong className="text-cyan-300">{formatBRL(ownPayroll, false)}</strong>
+                          <span className="text-slate-500 font-bold">({ownPctOfCeiling.toFixed(1)}%)</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-xs bg-amber-400 inline-block" />
+                          <span className="text-slate-400">Gasto de Contratações:</span>
+                          <strong className="text-amber-300">{formatBRL(targetsPayroll, false)}</strong>
+                          <span className="text-slate-500 font-bold">({targetsPctOfCeiling.toFixed(1)}%)</span>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <span
+                            className={`w-2.5 h-2.5 rounded-xs inline-block ${
+                              isBudgetExceeded ? 'bg-rose-500' : 'bg-emerald-400'
+                            }`}
+                          />
+                          <span className="text-slate-400">
+                            {isBudgetExceeded ? 'Excedente sobre o Teto:' : 'Saldo Disponível:'}
+                          </span>
+                          <strong className={isBudgetExceeded ? 'text-rose-400' : 'text-emerald-300'}>
+                            {isBudgetExceeded
+                              ? `- ${formatBRL(Math.abs(saldoOrcamentario), false)}`
+                              : formatBRL(saldoOrcamentario, false)}
+                          </strong>
+                          <span className="text-slate-500 font-bold">
+                            ({isBudgetExceeded ? `+${(percentualComprometido - 100).toFixed(1)}%` : `${availablePctOfCeiling.toFixed(1)}%`})
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="text-slate-400">
+                        Teto Total: <strong className="text-white">{formatBRL(budgetCeiling, false)} (100%)</strong>
+                      </div>
+                    </div>
+                  </>
+                )
+              })()}
             </div>
           </div>
-
-          {/* Barra de Progresso Visual do Teto Salarial */}
-          <div className="mt-3 pt-2.5 border-t border-slate-800/60">
-            <div className="flex items-center justify-between text-[10px] text-slate-400 mb-1">
-              <span className="flex items-center gap-1 font-semibold">
-                <span>
-                  Comprometimento Orçamentário ({metricsScope === 'TITULARES' ? '11 Titulares' : 'Elenco Completo'}):
-                </span>
-                <strong className={isBudgetExceeded ? 'text-rose-400' : 'text-emerald-400'}>
-                  {percentualComprometido.toFixed(1)}%
-                </strong>
-              </span>
-              <span>
-                {formatBRL(folhaProjetada, false)} de {formatBRL(budgetCeiling, false)}
-              </span>
-            </div>
-            <div className="w-full h-2 rounded-full bg-slate-900 border border-slate-800 overflow-hidden relative">
-              <div
-                className={`h-full rounded-full transition-all duration-500 ${
-                  isBudgetExceeded
-                    ? 'bg-gradient-to-r from-amber-500 to-rose-500'
-                    : percentualComprometido > 85
-                    ? 'bg-gradient-to-r from-emerald-500 via-amber-500 to-amber-400'
-                    : 'bg-gradient-to-r from-emerald-500 to-teal-400'
-                }`}
-                style={{ width: `${Math.min(percentualComprometido, 100)}%` }}
-              />
-            </div>
-          </div>
-        </div>
-      )}
+        )}
 
         {/* PAINEL RESUMO DE MÉTRICAS FÍSICAS, ETÁRIAS E COMPOSIÇÃO DE ELENCO */}
         <div className="w-full max-w-[1400px] mb-4 flex flex-wrap items-center justify-between gap-3 bg-[#0d1522] border border-slate-800/80 rounded-2xl p-3 px-5 shadow-lg backdrop-blur-sm">
@@ -2266,7 +2363,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
               </div>
               <div>
                 <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
-                  ELENCO VS ALVOS (ATIVOS)
+                  ELENCO VS CONTRATAÇÕES (ATIVOS)
                 </div>
                 <div className="flex items-center gap-2 text-xs font-bold">
                   <span className="text-cyan-300">{teamMetrics.activeOwnPlayersCount} Elenco</span>
@@ -2292,35 +2389,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
             </div>
           </div>
 
-          {/* Seletor de Escopo: Titulares vs Elenco Completo */}
+          {/* Indicador de Regra Única de Cálculo */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hidden sm:inline">
-              Base de Cálculo:
+            <span className="px-3 py-1.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-[11px] font-bold text-emerald-300 flex items-center gap-1.5">
+              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+              <span>Cálculo: Somente Atletas Marcados &quot;Ativo na Simulação&quot; ({teamMetrics.totalConsidered})</span>
             </span>
-            <div className="flex items-center bg-[#090e17] p-1 rounded-xl border border-slate-800 text-xs">
-              <button
-                type="button"
-                onClick={() => setMetricsScope('TITULARES')}
-                className={`px-3 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                  metricsScope === 'TITULARES'
-                    ? 'bg-slate-700 text-white shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                1º Ativo por Posição
-              </button>
-              <button
-                type="button"
-                onClick={() => setMetricsScope('COMPLETO')}
-                className={`px-3 py-1 rounded-lg font-bold text-xs transition-all cursor-pointer ${
-                  metricsScope === 'COMPLETO'
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/40'
-                }`}
-              >
-                Todos Ativos na Simulação
-              </button>
-            </div>
           </div>
         </div>
 
@@ -2365,17 +2439,10 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           {/* 3. DISPOSIÇÃO DAS 11 POSIÇÕES CONFORME A FORMAÇÃO SELECIONADA (SINCRONIZADA COM A TABELA) */}
           {activeFormation.positions.map((pos) => {
             const currentSlots = slotsData[pos.id] || []
-            const activeSlotsInPos = currentSlots.filter(s => s && s.is_simulated_active !== false)
-            const firstActiveSlot = activeSlotsInPos[0] || currentSlots[0] || null
+            const activeSlotsInPos = currentSlots.filter(s => s && s.is_simulated_active !== false && (s.nome?.trim() || s.id))
+            const firstActiveSlot = activeSlotsInPos[0] || null
             const posCoords = customPositions[pos.id] || { top: `${pos.top}%`, left: `${pos.left}%` }
             const isBeingMoved = draggingPosId === pos.id
-            const posSalaryMetrics = calculatePositionSalaryMetrics(currentSlots, players)
-            const posCostInScope = metricsScope === 'TITULARES'
-              ? posSalaryMetrics.titularSalary
-              : posSalaryMetrics.totalSalary
-            const posPercentOfTotal = folhaProjetada > 0 && posCostInScope > 0
-              ? (posCostInScope / folhaProjetada) * 100
-              : 0
 
             return (
               <div
@@ -2385,12 +2452,12 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 }`}
                 style={{ top: posCoords.top, left: posCoords.left }}
               >
-                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) — LISTA DINÂMICA SEM RÓTULOS FIXOS */}
+                {/* CARD TÁTICO TRANSLÚCIDO COMPACTO (DESKTOP) — LIMPO E ALINHADO */}
                 <div
                   onDragOver={(e) => handleDragOver(e, pos.id)}
                   onDragLeave={(e) => handleDragLeave(e, pos.id)}
                   onDrop={(e) => handleDropOnSlot(e, pos.id, null)}
-                  className={`hidden md:block w-[236px] min-w-[236px] max-w-[246px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:z-30 group ${
+                  className={`hidden md:block w-[236px] min-w-[236px] max-w-[236px] bg-[#070e1b]/95 backdrop-blur-md border rounded-xl p-2.5 shadow-2xl transition-all hover:z-30 group ${
                     isBeingMoved
                       ? 'border-2 border-emerald-400 shadow-emerald-500/30 scale-105 ring-2 ring-emerald-500/20'
                       : dragOverTarget === pos.id
@@ -2408,11 +2475,6 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                       <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 truncate group-hover/header:text-emerald-300">
                         {pos.label}
                       </span>
-                      {currentSlots.length > 0 && (
-                        <span className="text-[9px] font-bold px-1 py-0.2 rounded bg-slate-800 text-slate-400">
-                          {activeSlotsInPos.length}/{currentSlots.length}
-                        </span>
-                      )}
                     </div>
 
                     <div className="flex items-center gap-1" data-export-hide="true">
@@ -2448,59 +2510,90 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   {/* Corpo do Card: Lista Dinâmica de Slots Sincronizados com a Tabela */}
                   <div className="space-y-1.5 max-h-[230px] overflow-y-auto pr-0.5 custom-scrollbar">
                     {currentSlots.length === 0 ? (
-                      <div className="flex items-center gap-1" data-export-hide="true">
-                        <button
-                          type="button"
-                          onDragOver={(e) => {
-                            e.stopPropagation()
-                            handleDragOver(e, `${pos.id}-empty`)
-                          }}
-                          onDragLeave={(e) => {
-                            e.stopPropagation()
-                            handleDragLeave(e, `${pos.id}-empty`)
-                          }}
-                          onDrop={(e) => handleDropOnSlot(e, pos.id, 0)}
-                          onClick={() => {
-                            setAssigningPos(pos)
-                            setPlayerSearch('')
-                          }}
-                          className={`flex-1 rounded-lg p-1.5 text-center text-[9.5px] font-semibold cursor-pointer transition-colors border ${
-                            dragOverTarget === `${pos.id}-empty`
-                              ? 'border-2 border-dashed border-emerald-400 bg-emerald-500/20 text-emerald-200'
-                              : 'border-dashed border-emerald-500/30 hover:border-emerald-400 text-emerald-400/80 hover:text-emerald-300'
-                          }`}
-                        >
-                          + Escalar
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleAddEmptySlot(pos.id)}
-                          className="px-2 py-1.5 rounded-lg text-[9.5px] font-semibold cursor-pointer transition-colors border border-dashed border-slate-700 hover:border-cyan-400 text-slate-400 hover:text-cyan-300"
-                          title="Criar slot em branco sincronizado com a tabela"
-                        >
-                          + Linha
-                        </button>
-                      </div>
+                      /* Posição sem linhas: exibe card vazio com a exata mesma altura, largura e espaçamento */
+                      <div
+                        data-player-card="true"
+                        onDragOver={(e) => {
+                          e.stopPropagation()
+                          handleDragOver(e, `${pos.id}-empty`)
+                        }}
+                        onDragLeave={(e) => {
+                          e.stopPropagation()
+                          handleDragLeave(e, `${pos.id}-empty`)
+                        }}
+                        onDrop={(e) => handleDropOnSlot(e, pos.id, 0)}
+                        onClick={() => {
+                          setAssigningPos(pos)
+                          setPlayerSearch('')
+                        }}
+                        className={`w-full min-h-[42px] h-[42px] rounded-lg px-2 py-1.5 flex flex-col justify-between transition-all cursor-pointer border ${
+                          dragOverTarget === `${pos.id}-empty`
+                            ? 'border-2 border-dashed border-emerald-400 bg-emerald-500/20'
+                            : 'border-slate-800/80 bg-slate-950/35 hover:border-slate-700'
+                        }`}
+                      />
                     ) : (
                       currentSlots.map((slot, slotIdx) => {
                         const fullAthlete = resolveSlotAthlete(slot)
                         const isSimulatedActive = fullAthlete.is_simulated_active !== false
                         const isOwnPlayer = Boolean(fullAthlete.is_own_player)
-                        const isForeign = Boolean(fullAthlete.is_foreign)
                         const isBlankSlot = !fullAthlete.nome?.trim() && !fullAthlete.id
-                        const birthYearFormatted = formatAthleteBirthYear(fullAthlete)
+                        const ageFormatted = formatAthleteBirthYear(fullAthlete)
                         const subDetails = formatAthleteSubDetails(fullAthlete)
                         const slotKey = `${pos.id}-${slotIdx}`
                         const isBeingDragged = draggedItem?.posId === pos.id && draggedItem?.index === slotIdx
                         const isDragOverThis = dragOverTarget === slotKey
-                        const athleteSalary = getAthleteSalary(fullAthlete, players)
 
+                        // Card Vazio (linha criada sem atleta definido):
+                        // Totalmente vazio (sem nenhum texto ou placeholder) e com rigorosamente a mesma altura, largura e espaçamento dos cards preenchidos
+                        if (isBlankSlot) {
+                          return (
+                            <div
+                              key={slot.slotId || slot.id || slotIdx}
+                              data-player-card="true"
+                              onDragOver={(e) => {
+                                e.stopPropagation()
+                                handleDragOver(e, slotKey)
+                              }}
+                              onDragLeave={(e) => {
+                                e.stopPropagation()
+                                handleDragLeave(e, slotKey)
+                              }}
+                              onDrop={(e) => handleDropOnSlot(e, pos.id, slotIdx)}
+                              onClick={() => {
+                                setAssigningPos({ ...pos, targetSlotIndex: slotIdx })
+                                setPlayerSearch('')
+                              }}
+                              className={`relative w-full min-h-[42px] h-[42px] rounded-lg px-2 py-1.5 flex flex-col justify-between group/row transition-all cursor-pointer border ${
+                                isDragOverThis
+                                  ? 'border-2 border-dashed border-emerald-500/80 bg-emerald-950/60'
+                                  : 'border-slate-800/80 bg-slate-950/35 hover:border-slate-700'
+                              }`}
+                            >
+                              <button
+                                type="button"
+                                data-export-hide="true"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleRemovePlayer(pos.id, slotIdx)
+                                }}
+                                title="Remover linha"
+                                className="absolute top-1 right-1 opacity-0 group-hover/row:opacity-100 text-slate-500 hover:text-rose-400 transition-opacity cursor-pointer"
+                              >
+                                <X className="w-2.5 h-2.5" />
+                              </button>
+                            </div>
+                          )
+                        }
+
+                        // Card Preenchido:
+                        // Exibe de forma limpa e direta apenas: Nome do Jogador, Idade, Clube Atual, Altura (mantendo os badges discretos de Elenco/Alvo e o toggle de cálculo)
                         return (
                           <div
                             key={slot.slotId || slot.id || slotIdx}
                             data-player-card="true"
-                            draggable={!isBlankSlot}
-                            onDragStart={(e) => !isBlankSlot && handleDragStart(e, pos.id, slotIdx, fullAthlete)}
+                            draggable
+                            onDragStart={(e) => handleDragStart(e, pos.id, slotIdx, fullAthlete)}
                             onDragEnd={handleDragEnd}
                             onDragOver={(e) => {
                               e.stopPropagation()
@@ -2511,7 +2604,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               handleDragLeave(e, slotKey)
                             }}
                             onDrop={(e) => handleDropOnSlot(e, pos.id, slotIdx)}
-                            className={`rounded-lg px-2 py-1.5 flex flex-col gap-0.5 group/row transition-all border ${
+                            className={`w-full min-h-[42px] h-[42px] rounded-lg px-2 py-1.5 flex flex-col justify-between group/row transition-all border ${
                               !isSimulatedActive
                                 ? 'opacity-40 grayscale border-dashed border-slate-700 bg-slate-950/40'
                                 : isBeingDragged
@@ -2523,9 +2616,9 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                 : 'bg-emerald-950/35 border-emerald-700/40 hover:border-emerald-500/60'
                             }`}
                           >
+                            {/* Linha 1: Toggle de cálculo + Nome + Idade + Badge Elenco/Alvo */}
                             <div className="flex items-center justify-between gap-1 w-full">
                               <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                {/* Checkbox B no Card: Ativo na Simulação */}
                                 <input
                                   type="checkbox"
                                   data-export-hide="true"
@@ -2538,45 +2631,29 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                   }}
                                   title={
                                     isSimulatedActive
-                                      ? 'Ativo na Simulação (clique para desativar do orçamento e médias)'
-                                      : 'Inativo na Simulação (clique para incluir no orçamento e médias)'
+                                      ? 'Ativo na Simulação (desmarque para retirar do cálculo imediatamente)'
+                                      : 'Inativo na Simulação (marque para incluir no cálculo)'
                                   }
                                   className="w-3 h-3 rounded accent-emerald-500 cursor-pointer shrink-0"
                                 />
 
-                                {isBlankSlot ? (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setAssigningPos({ ...pos, targetSlotIndex: slotIdx })
-                                      setPlayerSearch('')
-                                    }}
-                                    className="text-[10.5px] italic text-slate-400 hover:text-emerald-300 truncate text-left cursor-pointer"
-                                    title="Slot sincronizado — digite na tabela abaixo ou clique para escalar do banco"
-                                  >
-                                    Slot em branco (escalar...)
-                                  </button>
-                                ) : (
-                                  <span
-                                    className={`font-bold text-[11.5px] leading-tight truncate ${
-                                      isSimulatedActive ? 'text-white' : 'text-slate-400 line-through'
-                                    }`}
-                                    title={fullAthlete.nome}
-                                  >
-                                    {fullAthlete.nome}
-                                  </span>
-                                )}
+                                <span
+                                  className={`font-bold text-[11px] leading-tight truncate ${
+                                    isSimulatedActive ? 'text-white' : 'text-slate-400 line-through'
+                                  }`}
+                                  title={fullAthlete.nome}
+                                >
+                                  {fullAthlete.nome}
+                                </span>
 
-                                {birthYearFormatted && (
+                                {ageFormatted && (
                                   <span className="text-[9px] font-semibold text-slate-300 bg-slate-800/90 px-1 py-0.2 rounded shrink-0">
-                                    {birthYearFormatted}
+                                    {ageFormatted}
                                   </span>
                                 )}
                               </div>
 
                               <div className="flex items-center gap-1 shrink-0 ml-1">
-                                {/* Badge discreto 'Elenco' vs 'Alvo' (Checkbox A) */}
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -2587,8 +2664,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                   }}
                                   title={
                                     isOwnPlayer
-                                      ? 'Atleta do Elenco Atual (clique para alternar para Alvo de Mercado)'
-                                      : 'Alvo de Mercado (clique para marcar como Elenco Atual)'
+                                      ? 'Elenco Atual (clique para alternar para Alvo)'
+                                      : 'Alvo de Mercado (clique para alternar para Elenco)'
                                   }
                                   className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded border transition-colors cursor-pointer ${
                                     isOwnPlayer
@@ -2598,61 +2675,6 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                 >
                                   {isOwnPlayer ? 'Elenco' : 'Alvo'}
                                 </button>
-
-                                {/* Micro-seletor de Cenário/Plano no card quando for Alvo */}
-                                {!isOwnPlayer && (
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      handleUpdateSlotField(pos.id, slotIdx, {
-                                        target_plan: fullAthlete.target_plan === 'PLANO_B' ? 'PLANO_A' : 'PLANO_B'
-                                      })
-                                    }}
-                                    title={
-                                      fullAthlete.target_plan === 'PLANO_B'
-                                        ? 'Classificado no Cenário 2 (Plano B) — clique para mudar para Cenário 1 (Plano A)'
-                                        : 'Classificado no Cenário 1 (Plano A) — clique para mudar para Cenário 2 (Plano B)'
-                                    }
-                                    className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded border transition-colors cursor-pointer ${
-                                      fullAthlete.target_plan === 'PLANO_B'
-                                        ? 'bg-indigo-500/25 text-indigo-300 border-indigo-500/50 hover:bg-indigo-500/35'
-                                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
-                                    }`}
-                                  >
-                                    {fullAthlete.target_plan === 'PLANO_B' ? 'Plano B' : 'Plano A'}
-                                  </button>
-                                )}
-
-                                {isForeign && (
-                                  <span
-                                    className="text-[7.5px] font-black px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40"
-                                    title="Atleta Estrangeiro"
-                                  >
-                                    EST
-                                  </span>
-                                )}
-
-                                {fullAthlete.nivel && (
-                                  <span className={`text-[8px] font-bold px-1 rounded border leading-tight ${getNivelStyle(fullAthlete.nivel)}`}>
-                                    {fullAthlete.nivel}
-                                  </span>
-                                )}
-
-                                {!isBlankSlot && (
-                                  <button
-                                    type="button"
-                                    data-export-hide="true"
-                                    onClick={(e) => {
-                                      e.stopPropagation()
-                                      setEditingFullPlayer(fullAthlete)
-                                    }}
-                                    title="Editar perfil completo do atleta"
-                                    className="opacity-0 group-hover/row:opacity-100 text-slate-400 hover:text-amber-400 transition-opacity cursor-pointer"
-                                  >
-                                    <Pencil className="w-2.5 h-2.5" />
-                                  </button>
-                                )}
 
                                 <button
                                   type="button"
@@ -2669,67 +2691,15 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                               </div>
                             </div>
 
-                            {subDetails && (
-                              <div className="text-[9.5px] text-slate-400 leading-tight truncate pl-4" title={subDetails}>
-                                {subDetails}
-                              </div>
-                            )}
-
-                            {/* Linha de Salário Estimado com Edição Rápida */}
-                            {showFinancials && !isBlankSlot && (
-                              <div className="flex items-center justify-between mt-0.5 pt-0.5 border-t border-slate-800/50 pl-4">
-                                <button
-                                  type="button"
-                                  onClick={(e) => {
-                                    e.stopPropagation()
-                                    handleOpenSalaryModal(pos.id, pos.label, slotIdx, fullAthlete)
-                                  }}
-                                  title="Clique para editar o salário mensal deste atleta"
-                                  className="flex items-center gap-1 text-[8.5px] text-emerald-400/90 hover:text-emerald-300 font-bold cursor-pointer group/sal hover:underline"
-                                >
-                                  <Coins className="w-2 h-2 text-emerald-400" />
-                                  <span>{formatBRL(athleteSalary, false)}/mês</span>
-                                  <Pencil className="w-2 h-2 text-slate-400 opacity-60 group-hover/sal:opacity-100" />
-                                </button>
-                                {!isSimulatedActive && (
-                                  <span className="text-[7px] font-extrabold uppercase px-1 rounded bg-slate-800 text-slate-400">
-                                    FORA DA CONTA
-                                  </span>
-                                )}
-                              </div>
-                            )}
+                            {/* Linha 2: Clube Atual • Altura */}
+                            <div className="text-[9.5px] text-slate-400 leading-tight truncate pl-4 h-[13px]" title={subDetails}>
+                              {subDetails}
+                            </div>
                           </div>
                         )
                       })
                     )}
                   </div>
-
-                  {/* Rodapé do Nó: Investimento Ativo na Posição & % do Gasto Total */}
-                  {showFinancials && currentSlots.length > 0 && (
-                    <div className="mt-2 pt-1.5 border-t border-slate-800/80 bg-slate-950/60 -mx-2.5 -mb-2.5 px-2.5 py-1.5 rounded-b-xl flex flex-col gap-1 text-[8.5px]">
-                      <div className="flex items-center justify-between gap-1 w-full">
-                        <div
-                          className="flex items-center gap-1 text-slate-400 truncate min-w-0"
-                          title={`Investimento ativo na posição: ${formatBRL(posCostInScope, false)} • ${posPercentOfTotal.toFixed(1)}% da folha projetada`}
-                        >
-                          <span className="text-slate-500 font-medium">Subtotal Ativo:</span>
-                          <span className="font-bold text-slate-200">
-                            {formatBRL(posCostInScope, false)}
-                          </span>
-                          <span className="text-emerald-400 font-bold ml-0.5">
-                            • {posPercentOfTotal.toFixed(1)}%
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="w-full h-1 bg-slate-800 rounded-full overflow-hidden">
-                        <div
-                          className="h-full rounded-full transition-all duration-500 bg-gradient-to-r from-emerald-500 to-teal-400"
-                          style={{ width: `${Math.min(100, posPercentOfTotal)}%` }}
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 {/* NÓ TÁTICO COMPACTO MOBILE TOUCH (< 768px) */}
@@ -2745,16 +2715,11 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                   {firstActiveSlot ? (
                     (() => {
                       const fullFirst = resolveSlotAthlete(firstActiveSlot)
-                      const birthYearFormatted = formatAthleteBirthYear(fullFirst)
+                      const ageFormatted = formatAthleteBirthYear(fullFirst)
                       return (
                         <>
                           <div className="relative w-10 h-10 rounded-full bg-gradient-to-br from-emerald-500 via-emerald-600 to-emerald-800 border-2 border-emerald-300 shadow-lg shadow-black/80 flex items-center justify-center">
                             <span className="text-[10px] font-black text-slate-950 uppercase">{pos.label}</span>
-                            {fullFirst.nivel && (
-                              <span className={`absolute -top-1.5 -right-1.5 text-[8px] font-black px-1 rounded-full border border-black shadow ${getNivelStyle(fullFirst.nivel)}`}>
-                                {fullFirst.nivel}
-                              </span>
-                            )}
                             {currentSlots.length > 1 && (
                               <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 bg-slate-950 text-emerald-400 border border-emerald-500/50 text-[8px] font-black px-1 rounded shadow">
                                 +{currentSlots.length - 1}
@@ -2762,30 +2727,25 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                             )}
                           </div>
                           <span className="mt-1 text-[10px] font-bold text-white max-w-[75px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                            {fullFirst.nome || 'Slot em branco'}
+                            {fullFirst.nome}
                           </span>
                           <span className="text-[8px] font-semibold text-emerald-300/90 max-w-[70px] truncate text-center drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
-                            {fullFirst.clube || fullFirst.ca || birthYearFormatted || ''}
+                            {fullFirst.clube || fullFirst.ca || ageFormatted || ''}
                           </span>
                         </>
                       )
                     })()
                   ) : (
-                    <>
-                      <div className="w-10 h-10 rounded-full border-2 border-dashed border-emerald-400/60 bg-slate-950/70 shadow-md flex flex-col items-center justify-center text-emerald-400">
-                        <Plus className="w-3.5 h-3.5 stroke-[2.5]" />
-                        <span className="text-[8px] font-black uppercase text-emerald-400/90">{pos.label}</span>
-                      </div>
-                      <span className="mt-0.5 text-[9px] font-semibold text-emerald-400/70 max-w-[70px] truncate text-center">
-                        Vago
-                      </span>
-                    </>
+                    <div className="w-10 h-10 rounded-full border-2 border-dashed border-emerald-400/60 bg-slate-950/70 shadow-md flex flex-col items-center justify-center text-emerald-400">
+                      <span className="text-[8px] font-black uppercase text-emerald-400/90">{pos.label}</span>
+                    </div>
                   )}
                 </div>
               </div>
             )
           })}
         </div>
+
 
         {/* ===================================================================== */}
         {/* TABELA DE GESTÃO DE ELENCO & SIMULAÇÃO (SINCRONIZADA COM O CAMPOGRAMA) */}
