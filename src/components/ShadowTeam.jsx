@@ -273,6 +273,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
   const [editingFullPlayer, setEditingFullPlayer] = useState(null)
   const [salaryInputVal, setSalaryInputVal] = useState('')
   const [positionImpacts, setPositionImpacts] = useState({}) // { [posId]: { diff: number, timestamp: number } }
+  const [isScenarioBalanceOpen, setIsScenarioBalanceOpen] = useState(true)
 
   // Auto-limpeza suave dos micro-badges de impacto após 7 segundos
   useEffect(() => {
@@ -322,7 +323,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       nivel: slot.nivel !== undefined ? slot.nivel : (base?.nivel ?? null),
       is_own_player: Boolean(slot.is_own_player),
       is_simulated_active: slot.is_simulated_active !== false,
-      is_foreign: Boolean(slot.is_foreign !== undefined ? slot.is_foreign : base?.is_foreign)
+      is_foreign: Boolean(slot.is_foreign !== undefined ? slot.is_foreign : base?.is_foreign),
+      target_plan: slot.target_plan === 'PLANO_B' ? 'PLANO_B' : 'PLANO_A'
     }
   }
 
@@ -487,6 +489,167 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
     }
   }, [activeFormation, slotsData, players, metricsScope])
 
+  // Classifica uma posição da formação em 1 dos 4 macro-setores executivos: GOLEIROS, DEFESA, MEIO_CAMPO, ATAQUE
+  const getMacroSectorKey = (pos) => {
+    const id = (pos?.id || '').toLowerCase()
+    if (id === 'gl') return 'GOLEIROS'
+    if (id.startsWith('zag') || id.startsWith('lat') || id.startsWith('ala')) return 'DEFESA'
+    if (id.startsWith('vol') || id.startsWith('med') || id.startsWith('mei')) return 'MEIO_CAMPO'
+    return 'ATAQUE'
+  }
+
+  // Cálculo Comparativo Multi-Cenários:
+  // Coluna 1: Elenco Real (is_own_player === true, ativos)
+  // Coluna 2: Cenário 1 (Elenco Real + Alvos Plano A ativos)
+  // Coluna 3: Cenário 2 (Elenco Real + Alvos Plano B ativos)
+  const scenarioComparisonData = useMemo(() => {
+    const computeScenarioMetrics = (predicateFn) => {
+      let totalPayroll = 0
+      let totalAthletes = 0
+      let ownCount = 0
+      let targetCount = 0
+      let foreignersCount = 0
+      let totalAge = 0
+      let countAge = 0
+      let totalHeight = 0
+      let countHeight = 0
+
+      const sectorTotals = {
+        GOLEIROS: { amount: 0, count: 0 },
+        DEFESA: { amount: 0, count: 0 },
+        MEIO_CAMPO: { amount: 0, count: 0 },
+        ATAQUE: { amount: 0, count: 0 }
+      }
+
+      activeFormation.positions.forEach(pos => {
+        const currentSlots = slotsData[pos.id] || []
+        const macroKey = getMacroSectorKey(pos)
+
+        currentSlots.forEach(slot => {
+          const full = resolveSlotAthlete(slot)
+          if (!full) return
+          if (!full.nome?.trim() && !full.id) return
+          if (full.is_simulated_active === false) return
+          if (!predicateFn(full)) return
+
+          const sal = getAthleteSalary(full, players)
+          totalPayroll += sal
+          totalAthletes += 1
+
+          if (full.is_own_player) {
+            ownCount += 1
+          } else {
+            targetCount += 1
+          }
+
+          if (full.is_foreign) {
+            foreignersCount += 1
+          }
+
+          sectorTotals[macroKey].amount += sal
+          sectorTotals[macroKey].count += 1
+
+          const { age } = extractAgeAndBirthYear(full)
+          if (age !== null && age >= 14 && age <= 55) {
+            totalAge += age
+            countAge += 1
+          }
+
+          const rawAlt = full.alt !== undefined && full.alt !== '' ? full.alt : full.altura
+          if (rawAlt !== undefined && rawAlt !== null && String(rawAlt).trim() !== '') {
+            const numAlt = parseFloat(String(rawAlt).replace(',', '.'))
+            if (!isNaN(numAlt) && numAlt > 0) {
+              const cm = numAlt < 3 ? Math.round(numAlt * 100) : Math.round(numAlt)
+              if (cm >= 140 && cm <= 230) {
+                totalHeight += cm
+                countHeight += 1
+              }
+            }
+          }
+        })
+      })
+
+      const availableBalance = budgetCeiling - totalPayroll
+      const isOverBudget = availableBalance < 0
+      const commitmentPct = budgetCeiling > 0 ? (totalPayroll / budgetCeiling) * 100 : 0
+      const avgAgeNum = countAge > 0 ? totalAge / countAge : null
+      const avgHeightNum = countHeight > 0 ? totalHeight / countHeight : null
+
+      const sectors = {
+        GOLEIROS: {
+          ...sectorTotals.GOLEIROS,
+          pct: totalPayroll > 0 ? (sectorTotals.GOLEIROS.amount / totalPayroll) * 100 : 0
+        },
+        DEFESA: {
+          ...sectorTotals.DEFESA,
+          pct: totalPayroll > 0 ? (sectorTotals.DEFESA.amount / totalPayroll) * 100 : 0
+        },
+        MEIO_CAMPO: {
+          ...sectorTotals.MEIO_CAMPO,
+          pct: totalPayroll > 0 ? (sectorTotals.MEIO_CAMPO.amount / totalPayroll) * 100 : 0
+        },
+        ATAQUE: {
+          ...sectorTotals.ATAQUE,
+          pct: totalPayroll > 0 ? (sectorTotals.ATAQUE.amount / totalPayroll) * 100 : 0
+        }
+      }
+
+      return {
+        totalPayroll,
+        availableBalance,
+        isOverBudget,
+        commitmentPct,
+        totalAthletes,
+        ownCount,
+        targetCount,
+        foreignersCount,
+        avgAge: avgAgeNum !== null ? avgAgeNum.toFixed(1) : null,
+        avgAgeNum,
+        countAge,
+        avgHeight: avgHeightNum !== null ? avgHeightNum.toFixed(1) : null,
+        avgHeightNum,
+        countHeight,
+        sectors
+      }
+    }
+
+    const elencoReal = computeScenarioMetrics(a => a.is_own_player === true)
+    const cenario1 = computeScenarioMetrics(
+      a => a.is_own_player === true || (!a.is_own_player && (a.target_plan || 'PLANO_A') === 'PLANO_A')
+    )
+    const cenario2 = computeScenarioMetrics(
+      a => a.is_own_player === true || (!a.is_own_player && a.target_plan === 'PLANO_B')
+    )
+
+    // Delta Executivo (Cenário 2 - Cenário 1)
+    const monthlyDiff = cenario2.totalPayroll - cenario1.totalPayroll
+    const annualDiff12 = monthlyDiff * 12
+    const annualDiff13 = monthlyDiff * 13.33
+    const ageDiff =
+      cenario2.avgAgeNum !== null && cenario1.avgAgeNum !== null
+        ? cenario2.avgAgeNum - cenario1.avgAgeNum
+        : null
+    const heightDiff =
+      cenario2.avgHeightNum !== null && cenario1.avgHeightNum !== null
+        ? cenario2.avgHeightNum - cenario1.avgHeightNum
+        : null
+    const foreignersDiff = cenario2.foreignersCount - cenario1.foreignersCount
+
+    return {
+      elencoReal,
+      cenario1,
+      cenario2,
+      delta: {
+        monthlyDiff,
+        annualDiff12,
+        annualDiff13,
+        ageDiff,
+        heightDiff,
+        foreignersDiff
+      }
+    }
+  }, [activeFormation, slotsData, players, budgetCeiling])
+
   // Adicionar nova linha em branco sincronizada (Tabela ⇄ Campograma)
   const handleAddEmptySlot = (posId) => {
     const newSlot = {
@@ -505,7 +668,8 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
       salarioEstimado: null,
       is_own_player: false,
       is_simulated_active: true,
-      is_foreign: false
+      is_foreign: false,
+      target_plan: 'PLANO_A'
     }
 
     setShadowTeams(prev => prev.map(team => {
@@ -2435,6 +2599,31 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                   {isOwnPlayer ? 'Elenco' : 'Alvo'}
                                 </button>
 
+                                {/* Micro-seletor de Cenário/Plano no card quando for Alvo */}
+                                {!isOwnPlayer && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation()
+                                      handleUpdateSlotField(pos.id, slotIdx, {
+                                        target_plan: fullAthlete.target_plan === 'PLANO_B' ? 'PLANO_A' : 'PLANO_B'
+                                      })
+                                    }}
+                                    title={
+                                      fullAthlete.target_plan === 'PLANO_B'
+                                        ? 'Classificado no Cenário 2 (Plano B) — clique para mudar para Cenário 1 (Plano A)'
+                                        : 'Classificado no Cenário 1 (Plano A) — clique para mudar para Cenário 2 (Plano B)'
+                                    }
+                                    className={`text-[7.5px] font-black uppercase px-1 py-0.2 rounded border transition-colors cursor-pointer ${
+                                      fullAthlete.target_plan === 'PLANO_B'
+                                        ? 'bg-indigo-500/25 text-indigo-300 border-indigo-500/50 hover:bg-indigo-500/35'
+                                        : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40 hover:bg-emerald-500/30'
+                                    }`}
+                                  >
+                                    {fullAthlete.target_plan === 'PLANO_B' ? 'Plano B' : 'Plano A'}
+                                  </button>
+                                )}
+
                                 {isForeign && (
                                   <span
                                     className="text-[7.5px] font-black px-1 py-0.2 rounded bg-purple-500/20 text-purple-300 border border-purple-500/40"
@@ -2605,7 +2794,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
           {/* Cabeçalho da Tabela de Gestão */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 mb-5 border-b border-slate-800">
             <div>
-              <div className="flex items-center gap-2.5">
+              <div className="flex items-center gap-2.5 flex-wrap">
                 <div className="w-8 h-8 rounded-xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
                   <Shield className="w-4 h-4" />
                 </div>
@@ -2617,7 +2806,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
-                Adicione linhas livremente em cada setor, diferencie atletas do <strong className="text-cyan-300">Elenco Atual</strong> vs <strong className="text-amber-300">Alvos de Mercado</strong>, e marque/desmarque <strong className="text-emerald-300">Ativo na Simulação</strong> para testar cenários de folha salarial e médias físicas sem excluir atletas.
+                Adicione linhas livremente em cada setor, diferencie atletas do <strong className="text-cyan-300">Elenco Atual</strong> vs <strong className="text-amber-300">Alvos de Mercado</strong> (<strong className="text-emerald-300">Cenário 1 - Plano A</strong> ou <strong className="text-indigo-300">Cenário 2 - Plano B</strong>), e marque/desmarque <strong className="text-emerald-300">Ativo na Simulação</strong>.
               </p>
             </div>
 
@@ -2713,18 +2902,19 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                     </div>
                   ) : (
                     <div className="overflow-x-auto">
-                      <table className="w-full text-left border-collapse min-w-[920px]">
+                      <table className="w-full text-left border-collapse min-w-[1060px]">
                         <thead>
                           <tr className="border-b border-slate-800/80 text-[10px] font-extrabold uppercase tracking-wider text-slate-400 bg-[#0b1320]">
-                            <th className="py-2 px-3 w-[110px] text-center">Ativo na Simulação</th>
-                            <th className="py-2 px-3 w-[125px] text-center">Elenco Atual</th>
-                            <th className="py-2 px-3 min-w-[230px]">Nome do Atleta (Base ou Livre)</th>
-                            <th className="py-2 px-3 w-[150px]">Salário Mensal (R$)</th>
-                            <th className="py-2 px-3 w-[105px]">Altura (cm)</th>
-                            <th className="py-2 px-3 w-[135px]">Idade / Ano Nasc.</th>
-                            <th className="py-2 px-3 w-[115px] text-center">Estrangeiro</th>
-                            <th className="py-2 px-3 min-w-[160px]">Clube Atual / Vínculo</th>
-                            <th className="py-2 px-3 w-[60px] text-center">Ação</th>
+                            <th className="py-2 px-3 w-[105px] text-center">Ativo na Simulação</th>
+                            <th className="py-2 px-3 w-[115px] text-center">Elenco Atual</th>
+                            <th className="py-2 px-3 w-[195px] text-center">Prioridade do Alvo</th>
+                            <th className="py-2 px-3 min-w-[220px]">Nome do Atleta (Base ou Livre)</th>
+                            <th className="py-2 px-3 w-[140px]">Salário Mensal (R$)</th>
+                            <th className="py-2 px-3 w-[95px]">Altura (cm)</th>
+                            <th className="py-2 px-3 w-[130px]">Idade / Ano Nasc.</th>
+                            <th className="py-2 px-3 w-[105px] text-center">Estrangeiro</th>
+                            <th className="py-2 px-3 min-w-[150px]">Clube Atual / Vínculo</th>
+                            <th className="py-2 px-3 w-[55px] text-center">Ação</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-800/60 text-xs">
@@ -2733,6 +2923,7 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                             const isSimulatedActive = fullAthlete.is_simulated_active !== false
                             const isOwnPlayer = Boolean(fullAthlete.is_own_player)
                             const isForeign = Boolean(fullAthlete.is_foreign)
+                            const targetPlan = fullAthlete.target_plan === 'PLANO_B' ? 'PLANO_B' : 'PLANO_A'
                             const rowKey = `${pos.id}-${slotIdx}`
                             const isAutocompleteOpen = activeRowAutocomplete === rowKey
 
@@ -2832,6 +3023,54 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
                                       {isOwnPlayer ? 'Elenco' : 'Alvo'}
                                     </span>
                                   </label>
+                                </td>
+
+                                {/* 2B. Classificação de Alvos: Cenário 1 (Plano A) vs Cenário 2 (Plano B) */}
+                                <td className="py-2 px-3 text-center">
+                                  {isOwnPlayer ? (
+                                    <span
+                                      className="inline-flex items-center gap-1 px-2 py-1 rounded-lg bg-cyan-950/50 text-cyan-300 border border-cyan-500/30 text-[10px] font-bold"
+                                      title="Atleta do Elenco Real — incluído automaticamente na base fixa de todos os cenários"
+                                    >
+                                      <UserCheck className="w-3 h-3 text-cyan-400" />
+                                      <span>Base Fixa (Elenco Real)</span>
+                                    </span>
+                                  ) : (
+                                    <div className="inline-flex items-center bg-[#080d16] p-0.5 rounded-lg border border-slate-700/80">
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateSlotField(pos.id, slotIdx, {
+                                            target_plan: 'PLANO_A'
+                                          })
+                                        }
+                                        title="Incluir este alvo no Cenário 1 (Plano A)"
+                                        className={`px-2 py-1 rounded-md text-[10px] font-extrabold transition cursor-pointer ${
+                                          targetPlan === 'PLANO_A'
+                                            ? 'bg-emerald-500 text-slate-950 shadow-xs'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        Cenário 1 (Plano A)
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() =>
+                                          handleUpdateSlotField(pos.id, slotIdx, {
+                                            target_plan: 'PLANO_B'
+                                          })
+                                        }
+                                        title="Incluir este alvo no Cenário 2 (Plano B)"
+                                        className={`px-2 py-1 rounded-md text-[10px] font-extrabold transition cursor-pointer ${
+                                          targetPlan === 'PLANO_B'
+                                            ? 'bg-indigo-500 text-white shadow-xs'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                        }`}
+                                      >
+                                        Cenário 2 (Plano B)
+                                      </button>
+                                    </div>
+                                  )}
                                 </td>
 
                                 {/* 3. Nome do Atleta (com seletor/autocomplete buscando de players OU digitação livre) */}
@@ -3054,6 +3293,392 @@ export default function ShadowTeam({ onBack, players = [], user, onSignOut, onOp
               )
             })}
           </div>
+        </section>
+
+        {/* ===================================================================== */}
+        {/* BALANÇO FINANCEIRO & BIOMÉTRICO DOS CENÁRIOS (MULTI-CENÁRIOS + DELTA) */}
+        {/* ===================================================================== */}
+        <section className="w-full max-w-[1400px] mt-6 mb-8 bg-gradient-to-b from-[#0c1524] to-[#09101b] border border-slate-800/90 rounded-2xl p-4 md:p-6 shadow-2xl">
+          {/* Cabeçalho Expansível */}
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-slate-800">
+            <div className="flex items-start sm:items-center gap-3">
+              <div className="w-9 h-9 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0">
+                <TrendingUp className="w-5 h-5" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <h2 className="text-base md:text-lg font-black text-white tracking-tight uppercase">
+                    Balanço Financeiro &amp; Biométrico dos Cenários
+                  </h2>
+                  <span className="text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                    Comparativo Executivo Multi-Cenários
+                  </span>
+                </div>
+                <p className="text-xs text-slate-400 mt-0.5">
+                  Comparação direta entre a base fixa (<strong className="text-cyan-300">Elenco Real</strong>), a projeção com alvos prioritários (<strong className="text-emerald-300">Cenário 1 — Plano A</strong>) e a alternativa secundária (<strong className="text-indigo-300">Cenário 2 — Plano B</strong>).
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setIsScenarioBalanceOpen(!isScenarioBalanceOpen)}
+              className="px-3.5 py-2 rounded-xl bg-slate-800/90 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-bold flex items-center gap-2 transition cursor-pointer self-start sm:self-auto shrink-0"
+            >
+              {isScenarioBalanceOpen ? <EyeOff className="w-3.5 h-3.5 text-slate-400" /> : <Eye className="w-3.5 h-3.5 text-emerald-400" />}
+              <span>{isScenarioBalanceOpen ? 'Recolher Balanço' : 'Expandir Balanço'}</span>
+            </button>
+          </div>
+
+          {isScenarioBalanceOpen && (
+            <div className="mt-5 space-y-6 animate-in fade-in duration-200">
+              {/* 1. CARD DE VARIAÇÃO (DELTA EXECUTIVO: CENÁRIO 1 VS CENÁRIO 2) */}
+              <div className="bg-[#101b2e] border border-indigo-500/30 rounded-2xl p-4 md:p-5 shadow-lg">
+                <div className="flex items-center justify-between flex-wrap gap-2 mb-3.5 pb-2.5 border-b border-slate-800/80">
+                  <div className="flex items-center gap-2">
+                    <Sparkles className="w-4 h-4 text-amber-400" />
+                    <h3 className="text-xs md:text-sm font-black uppercase tracking-wider text-white">
+                      Card de Variação — Delta Executivo (Cenário 2 Plano B vs Cenário 1 Plano A)
+                    </h3>
+                  </div>
+                  <span className="text-[11px] text-slate-400 font-medium">
+                    Impacto direto ao optar pela lista de alvos do <strong className="text-indigo-300">Plano B</strong> em relação ao <strong className="text-emerald-300">Plano A</strong>
+                  </span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3.5">
+                  {/* Delta 1: Diferença Mensal de Folha */}
+                  <div className="bg-[#0b1320] border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                      <span>Diferença Mensal de Folha</span>
+                      <Coins className="w-3.5 h-3.5 text-amber-400" />
+                    </div>
+                    <div
+                      className={`text-lg md:text-xl font-black my-1 ${
+                        scenarioComparisonData.delta.monthlyDiff < 0
+                          ? 'text-emerald-400'
+                          : scenarioComparisonData.delta.monthlyDiff > 0
+                          ? 'text-rose-400'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      {scenarioComparisonData.delta.monthlyDiff === 0
+                        ? 'R$ 0,00 / mês'
+                        : `${scenarioComparisonData.delta.monthlyDiff > 0 ? '+' : '-'} ${formatBRL(
+                            Math.abs(scenarioComparisonData.delta.monthlyDiff),
+                            true
+                          )} / mês`}
+                    </div>
+                    <div className="text-[11px] text-slate-400">
+                      {scenarioComparisonData.delta.monthlyDiff < 0 ? (
+                        <span className="text-emerald-300 font-semibold">
+                          Cenário 2 (Plano B) gera economia mensal na folha
+                        </span>
+                      ) : scenarioComparisonData.delta.monthlyDiff > 0 ? (
+                        <span className="text-rose-300 font-semibold">
+                          Cenário 2 (Plano B) exige maior investimento mensal
+                        </span>
+                      ) : (
+                        <span>Mesmo custo mensal entre Plano A e Plano B</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Delta 2: Diferença Anual Projetada (12m e 13,3m) */}
+                  <div className="bg-[#0b1320] border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                      <span>Impacto no Orçamento Anual</span>
+                      <Wallet className="w-3.5 h-3.5 text-cyan-400" />
+                    </div>
+                    <div
+                      className={`text-lg md:text-xl font-black my-1 ${
+                        scenarioComparisonData.delta.annualDiff12 < 0
+                          ? 'text-emerald-400'
+                          : scenarioComparisonData.delta.annualDiff12 > 0
+                          ? 'text-rose-400'
+                          : 'text-slate-300'
+                      }`}
+                    >
+                      {scenarioComparisonData.delta.annualDiff12 === 0
+                        ? 'R$ 0,00 / ano (12x)'
+                        : `${scenarioComparisonData.delta.annualDiff12 > 0 ? '+' : '-'} ${formatBRL(
+                            Math.abs(scenarioComparisonData.delta.annualDiff12),
+                            false
+                          )} (12x)`}
+                    </div>
+                    <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                      <span>Com 13º + férias (13,33x):</span>
+                      <strong className="text-slate-200">
+                        {scenarioComparisonData.delta.annualDiff13 === 0
+                          ? 'R$ 0'
+                          : `${scenarioComparisonData.delta.annualDiff13 > 0 ? '+' : '-'} ${formatBRL(
+                              Math.abs(scenarioComparisonData.delta.annualDiff13),
+                              false
+                            )}`}
+                      </strong>
+                    </div>
+                  </div>
+
+                  {/* Delta 3: Diferença Física & Biométrica (Altura e Idade) */}
+                  <div className="bg-[#0b1320] border border-slate-800 rounded-xl p-3.5 flex flex-col justify-between">
+                    <div className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 flex items-center justify-between">
+                      <span>Diferença Física (Altura &amp; Idade)</span>
+                      <Ruler className="w-3.5 h-3.5 text-emerald-400" />
+                    </div>
+                    <div className="flex items-center gap-4 my-1">
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">Δ Altura Média</span>
+                        <span className="text-base font-black text-emerald-300">
+                          {scenarioComparisonData.delta.heightDiff === null
+                            ? '—'
+                            : `${scenarioComparisonData.delta.heightDiff > 0 ? '+' : ''}${scenarioComparisonData.delta.heightDiff.toFixed(1)} cm`}
+                        </span>
+                      </div>
+                      <div className="h-7 w-[1px] bg-slate-800" />
+                      <div>
+                        <span className="text-[10px] text-slate-400 block">Δ Idade Média</span>
+                        <span className="text-base font-black text-amber-300">
+                          {scenarioComparisonData.delta.ageDiff === null
+                            ? '—'
+                            : `${scenarioComparisonData.delta.ageDiff > 0 ? '+' : ''}${scenarioComparisonData.delta.ageDiff.toFixed(1)} anos`}
+                        </span>
+                      </div>
+                    </div>
+                    <div className="text-[11px] text-slate-400 flex items-center justify-between">
+                      <span>Variação de Estrangeiros:</span>
+                      <strong className="text-purple-300">
+                        {scenarioComparisonData.delta.foreignersDiff > 0
+                          ? `+${scenarioComparisonData.delta.foreignersDiff}`
+                          : scenarioComparisonData.delta.foreignersDiff}
+                      </strong>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* 2. TABELA EXECUTIVA DE CENÁRIOS (3 COLUNAS) */}
+              <div className="overflow-x-auto rounded-xl border border-slate-800">
+                <table className="w-full text-left border-collapse min-w-[820px]">
+                  <thead>
+                    <tr className="bg-[#111c2e] border-b border-slate-800">
+                      <th className="py-3.5 px-4 text-xs font-black uppercase tracking-wider text-slate-300 w-[26%]">
+                        Indicador Executivo / Setor
+                      </th>
+                      <th className="py-3.5 px-4 w-[24.6%] border-l border-slate-800/80 bg-cyan-950/20">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-cyan-300">
+                            Coluna 1: Elenco Real
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30">
+                            {scenarioComparisonData.elencoReal.totalAthletes} atletas
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                          Apenas atletas com Elenco Atual = Sim
+                        </div>
+                      </th>
+                      <th className="py-3.5 px-4 w-[24.6%] border-l border-slate-800/80 bg-emerald-950/20">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-emerald-300">
+                            Coluna 2: Cenário 1 (Plano A)
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30">
+                            {scenarioComparisonData.cenario1.totalAthletes} atletas ({scenarioComparisonData.cenario1.targetCount} alvos A)
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                          Elenco Real + Alvos Plano A ativos
+                        </div>
+                      </th>
+                      <th className="py-3.5 px-4 w-[24.6%] border-l border-slate-800/80 bg-indigo-950/20">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-indigo-300">
+                            Coluna 3: Cenário 2 (Plano B)
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                            {scenarioComparisonData.cenario2.totalAthletes} atletas ({scenarioComparisonData.cenario2.targetCount} alvos B)
+                          </span>
+                        </div>
+                        <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                          Elenco Real + Alvos Plano B ativos
+                        </div>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/70 text-xs bg-[#0b1320]">
+                    {/* Linha 1: Folha Salarial Total (R$) */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <DollarSign className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Folha Salarial Total (R$)</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td key={`payroll-${idx}`} className="py-3 px-4 border-l border-slate-800/70 font-black text-sm text-amber-300">
+                          {formatBRL(col.totalPayroll, true)}
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Linha 2: Saldo Disponível no Teto (R$) */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <Coins className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Saldo Disponível no Teto (R$)</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td
+                          key={`balance-${idx}`}
+                          className={`py-3 px-4 border-l border-slate-800/70 font-black text-sm ${
+                            col.isOverBudget ? 'text-rose-400' : 'text-emerald-300'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span>
+                              {col.isOverBudget
+                                ? `- ${formatBRL(Math.abs(col.availableBalance), true)}`
+                                : `+ ${formatBRL(col.availableBalance, true)}`}
+                            </span>
+                            <span
+                              className={`text-[9px] font-extrabold px-1.5 py-0.5 rounded border ${
+                                col.isOverBudget
+                                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+                                  : 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30'
+                              }`}
+                            >
+                              {col.isOverBudget ? 'ACIMA DO TETO' : 'DENTRO DO TETO'}
+                            </span>
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Linha 3: % de Comprometimento do Teto */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <Percent className="w-4 h-4 text-cyan-400 shrink-0" />
+                        <span>% de Comprometimento do Teto</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td key={`pct-${idx}`} className="py-3 px-4 border-l border-slate-800/70">
+                          <div className="flex items-center justify-between text-xs font-black mb-1">
+                            <span className={col.isOverBudget ? 'text-rose-400' : 'text-slate-100'}>
+                              {col.commitmentPct.toFixed(1)}%
+                            </span>
+                            <span className="text-[10px] text-slate-500 font-semibold">
+                              Teto: {formatCompactBRL(budgetCeiling)}
+                            </span>
+                          </div>
+                          <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden border border-slate-800">
+                            <div
+                              className={`h-full rounded-full ${
+                                col.isOverBudget
+                                  ? 'bg-gradient-to-r from-amber-500 to-rose-500'
+                                  : 'bg-gradient-to-r from-emerald-500 to-cyan-400'
+                              }`}
+                              style={{ width: `${Math.min(100, col.commitmentPct)}%` }}
+                            />
+                          </div>
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Linha 4: Média de Idade (anos) */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <Calendar className="w-4 h-4 text-amber-400 shrink-0" />
+                        <span>Média de Idade (anos)</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td key={`age-${idx}`} className="py-3 px-4 border-l border-slate-800/70 font-bold text-slate-100">
+                          {col.avgAge ? (
+                            <span>
+                              <strong className="text-amber-300 text-sm font-black">{col.avgAge} anos</strong>{' '}
+                              <span className="text-[10px] text-slate-500">({col.countAge} atletas)</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">—</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Linha 5: Média de Altura (cm) */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <Ruler className="w-4 h-4 text-emerald-400 shrink-0" />
+                        <span>Média de Altura (cm)</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td key={`height-${idx}`} className="py-3 px-4 border-l border-slate-800/70 font-bold text-slate-100">
+                          {col.avgHeight ? (
+                            <span>
+                              <strong className="text-emerald-300 text-sm font-black">{col.avgHeight} cm</strong>{' '}
+                              <span className="text-[10px] text-slate-500">({col.countHeight} atletas)</span>
+                            </span>
+                          ) : (
+                            <span className="text-slate-500">—</span>
+                          )}
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Linha 6: Total de Estrangeiros */}
+                    <tr className="hover:bg-slate-900/60">
+                      <td className="py-3 px-4 font-extrabold text-slate-200 flex items-center gap-2">
+                        <Globe className="w-4 h-4 text-purple-400 shrink-0" />
+                        <span>Total de Estrangeiros</span>
+                      </td>
+                      {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => (
+                        <td key={`foreign-${idx}`} className="py-3 px-4 border-l border-slate-800/70">
+                          <span className="px-2 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 font-black text-xs">
+                            {col.foreignersCount} {col.foreignersCount === 1 ? 'estrangeiro' : 'estrangeiros'}
+                          </span>
+                        </td>
+                      ))}
+                    </tr>
+
+                    {/* Divisor: Distribuição por Setor (R$ e %) */}
+                    <tr className="bg-[#0e1829]">
+                      <td colSpan={4} className="py-2 px-4 text-[10px] font-black uppercase tracking-wider text-emerald-400">
+                        Distribuição Orçamentária por Macro-Setor (R$ Mensal e % sobre a Folha do Cenário)
+                      </td>
+                    </tr>
+
+                    {[
+                      { key: 'GOLEIROS', label: 'Setor: Goleiros' },
+                      { key: 'DEFESA', label: 'Setor: Defesa (Zagueiros + Laterais/Alas)' },
+                      { key: 'MEIO_CAMPO', label: 'Setor: Meio-Campo (Volantes + Meias)' },
+                      { key: 'ATAQUE', label: 'Setor: Ataque (Extremos + Centroavantes)' }
+                    ].map((sec) => (
+                      <tr key={`sector-row-${sec.key}`} className="hover:bg-slate-900/60">
+                        <td className="py-2.5 px-4 font-bold text-slate-300 pl-6">
+                          {sec.label}
+                        </td>
+                        {[scenarioComparisonData.elencoReal, scenarioComparisonData.cenario1, scenarioComparisonData.cenario2].map((col, idx) => {
+                          const secData = col.sectors[sec.key]
+                          return (
+                            <td key={`sec-${sec.key}-${idx}`} className="py-2.5 px-4 border-l border-slate-800/70">
+                              <div className="flex items-center justify-between">
+                                <span className="font-bold text-slate-100">
+                                  {formatBRL(secData.amount, false)}
+                                </span>
+                                <span className="text-[10.5px] font-extrabold text-emerald-400 bg-emerald-500/10 border border-emerald-500/25 px-1.5 py-0.5 rounded">
+                                  {secData.pct.toFixed(1)}%
+                                </span>
+                              </div>
+                              <div className="text-[10px] text-slate-500 mt-0.5">
+                                {secData.count} {secData.count === 1 ? 'atleta ativo' : 'atletas ativos'} no setor
+                              </div>
+                            </td>
+                          )
+                        })}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </section>
       </main>
 
